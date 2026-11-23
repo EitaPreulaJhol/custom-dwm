@@ -13,6 +13,10 @@ the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
   Button2 toggles floating; Button3 resizes. Plain right-drag on the 5px
   frame border resizes from that corner (or from that edge in the middle);
   `Mod`+right-drag inside the window uses the nearest corner.
+  In **tabbed** mode the same title bar is a shared tab strip: one equal cell
+  per tiled client, the focused tab with the light background, 1px separators,
+  and a click on a tab focuses that client. Only the active tab's content is
+  mapped; the tab strip is part of the frame.
 - **Fixed-size prompts** — windows that advertise `min == max` size hints
   after mapping (GCR / gnome-keyring) are floated and centered at their hinted
   size. Each frame redirects its client's ConfigureRequests, so a client can
@@ -23,10 +27,11 @@ the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
   the selected one, occupied dot, `|` separator, clock and a 16px systray.
 - **Taskbar** — the current workspace's windows inside the bar, each with a
   Nerd Font icon, title, and a 1px orange border on the focused one.
-- **Layouts** — `tile` (splith), `tilev` (splitv), two monocle variants for
-  stacking/tabbed, floating, with 10px inner gaps and a 10px gap on all four
-  monitor edges (a maximized window keeps the same frame on every side). The
-  frames make the gaps exact even for terminals with size hints.
+- **Layouts** — `tile` (splith), `tilev` (splitv), `monocle` for stacking,
+  and a real **tabbed** layout, plus floating, with 10px inner gaps and a 10px
+  gap on all four monitor edges (a maximized window keeps the same frame on
+  every side). The frames make the gaps exact even for terminals with size
+  hints.
 - **Controls** — every binding from `based_on/i3_base_config`, including
   `resize`/`move` modes, `back_and_forth`, directional focus/move, and the
   floating maximum size. Floating moves do not snap or re-apply size hints.
@@ -34,14 +39,18 @@ the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
   `_NET_ACTIVE_WINDOW`/X11, so it works under dwm (and still under i3). It
   surrounds the whole frame, title bar included, and prefers the real X input
   focus over a stale `_NET_ACTIVE_WINDOW` property, so the orange frame matches
-  the window that actually receives the keys.
+  the window that actually receives the keys. In dwm's tabbed layout the
+  active tab rectangle is published as `_DWM_TAB`; the helper restores the old
+  i3 tab notch: the top edge is high over the focused tab, lowered over the
+  inactive tabs, with the vertical separators between them.
 - **Session** — `integration/` has the once-per-session autostart, the clock,
   in-place restart, the exit confirmation and the `.desktop`/`.xinitrc` files.
 
 Known gaps: h/v split is approximated by the two tile layouts (no i3 tree);
-the i3 outline tab notch is gone; and a process restart (dwm has no in-process
-restart) assigns hidden clients to the current tag. The taskbar icons are Nerd
-Font glyphs from `iconrules[]`, like the reference polybar.
+the EWMH-only outline path under i3 still has no tree-based tab notch (dwm
+publishes `_DWM_TAB`, i3 does not); and a process restart (dwm has no
+in-process restart) assigns hidden clients to the current tag. The taskbar
+icons are Nerd Font glyphs from `iconrules[]`, like the reference polybar.
 
 ## Build
 
@@ -101,6 +110,7 @@ exit, so `$mod+Shift+r` keeps all X clients and the helper processes alive.
 | `Mod+h` / `Mod+v` | splith / splitv layout |
 | `Mod+Shift+f` | fullscreen |
 | `Mod+s` / `Mod+w` / `Mod+e` | stacking / tabbed / toggle split |
+| click a tab in tabbed mode | focus that client |
 | `Mod+space` | toggle floating |
 | `Mod+Shift+space` | focus the other of tiling/floating |
 | `Mod+1..0`, `Mod+Shift+1..0` | view / move to tags 1–10 |
@@ -147,8 +157,8 @@ docker run --rm -v "$PWD":/src -v /tmp/dwm-out:/out \
 Test modes: `SHOW_CLIENTS=1` (three xmessages), `SHOW_ST=1` (four st
 terminals, for size-hint gaps), `SHOW_TRAY=1` (three fake XEmbed icons),
 `TEST_FLOAT=1`, `TEST_TILEDRAG=1`, `TEST_RESIZE=1`,
-`TEST_BORDERRESIZE=1`, `TEST_CORNER=TL|TR|BL|BR`, `TEST_FULLSCREEN=1`,
-`TEST_TAGSWITCH=1`, `TEST_LAUNCHER=1`. `test/session.sh` covers autostart,
+`TEST_BORDERRESIZE=1`, `TEST_CORNER=TL|TR|BL|BR`, `TEST_TABS=1`,
+`TEST_FULLSCREEN=1`, `TEST_TAGSWITCH=1`, `TEST_LAUNCHER=1`. `test/session.sh` covers autostart,
 restart and the floating exit dialog. `test/fixed.sh` (with
 `FIXED_CLASS=Gcr-prompter` or `Test-fixed`) checks fixed-size prompts: the
 client must end at `939x111` inside a centered `949x141` frame.

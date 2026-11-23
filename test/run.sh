@@ -145,6 +145,34 @@ if [ "${TAG_TEN:-0}" = 1 ]; then
 	xdotool key --clearmodifiers super+shift+0
 	sleep 0.4
 fi
+if [ "${TEST_TABS:-0}" = 1 ]; then
+	cc -O2 -o /tmp/parent test/parent.c -lX11
+	xdotool key --clearmodifiers super+w
+	sleep 0.4
+	import -window root /out/tabs-before.png
+	A=$(xdotool getactivewindow)
+	FP=$(/tmp/parent "$A")
+	TITLE=$(xwininfo -id "$FP" -tree | grep -oE '0x[0-9a-f]+' | tail -1)
+	TX=$(xwininfo -id "$TITLE" | awk '/Absolute upper-left X/ {print $4}')
+	TY=$(xwininfo -id "$TITLE" | awk '/Absolute upper-left Y/ {print $4}')
+	TW=$(xwininfo -id "$TITLE" | awk '/Width:/ {print $2}')
+	TH=$(xwininfo -id "$TITLE" | awk '/Height:/ {print $2}')
+	echo "frame=$FP title=$TITLE at $TX,$TY ${TW}x${TH}" >/out/tabs.txt
+	echo "before active=$A focus=$(xdotool getwindowfocus)" >>/out/tabs.txt
+	# three equal tabs; the middle one is the center of the title bar
+	xdotool mousemove --sync $((TX + TW / 2)) $((TY + TH / 2)) click 1
+	sleep 0.5
+	A=$(xdotool getactivewindow)
+	echo "after active=$A focus=$(xdotool getwindowfocus)" >>/out/tabs.txt
+	import -window root /out/tabs-middle.png
+	xwininfo -root -tree >/out/tabs-tree.txt 2>&1
+	# leave tabbed mode: all frames must map again and no stale notch property
+	xdotool key --clearmodifiers super+h
+	sleep 0.4
+	xprop -id "$FP" _DWM_TAB >/out/tabs-exit-prop.txt 2>&1
+	import -window root /out/tabs-exit.png
+fi
+
 if [ -n "${TEST_CORNER:-}" ]; then
 	cc -O2 -o /tmp/parent test/parent.c -lX11
 	A=$(xdotool getactivewindow)

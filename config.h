@@ -80,7 +80,7 @@ static const Layout layouts[] = {
 	{ "[]=",      tile },    /* splith: master left, stack right (i3 default) */
 	{ "[v]",      tilev },   /* splitv: master top, stack bottom */
 	{ "[S]",      monocle }, /* stacking (without i3 title bars) */
-	{ "[T]",      monocle }, /* tabbed (tabs are the taskbar entries) */
+	{ "[T]",      tabbed },  /* tabbed (shared tab bar) */
 	{ "><>",      NULL },    /* floating */
 };
 
@@ -231,6 +231,7 @@ static const Button buttons[] = {
 	{ ClkBorder,           MODKEY,         Button1,        movemouse,      {0} },
 	{ ClkBorder,           MODKEY,         Button3,        resizemouse,    {0} },
 	{ ClkBorder,           0,              Button2,        togglefloating, {0} },
+	{ ClkTab,              0,              Button1,        focustab,       {0} },
 	{ ClkTitleBar,         0,              Button1,        titleclick,     {0} },
 	{ ClkTitleBar,         0,              Button3,        resizemouse,    {0} },
 	{ ClkTitleBar,          MODKEY,         Button1,        movemouse,      {0} },

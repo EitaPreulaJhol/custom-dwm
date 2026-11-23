@@ -79,10 +79,10 @@ enum { SchemeNorm, SchemeSel, SchemeUrg, SchemeTagEmpty, SchemeTagOcc,
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetSystemTray, NetSystemTrayOP, NetSystemTrayOrientation, NetSystemTrayOrientationHorz,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
-       NetWMWindowTypeDialog, NetClientList, NetLast }; /* EWMH atoms */
+       NetWMWindowTypeDialog, NetClientList, NetDwmTab, NetLast }; /* EWMH atoms */
 enum { Manager, Xembed, XembedInfo, XLast }; /* Xembed atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
-enum { ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkBorder, ClkTitleBar, ClkRootWin, ClkLast }; /* clicks */
+enum { ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkBorder, ClkTitleBar, ClkTab, ClkRootWin, ClkLast }; /* clicks */
 enum { ModeNormal, ModeResize, ModeMove }; /* binding modes */
 enum { DirLeft, DirDown, DirUp, DirRight }; /* directions */
 enum { RLeft = 1, RRight = 2, RTop = 4, RBottom = 8 }; /* resize anchors */
@@ -162,6 +162,12 @@ struct Monitor {
 	int taskn;
 	int taskx[33];
 	Client *taskclients[32];
+	/* tabbed layout state */
+	Client *tabsel;
+	Client *tabclients[32];
+	int tabx[32];
+	int tabw[32];
+	int tabn;
 };
 
 typedef struct {
@@ -213,6 +219,7 @@ static void focusin(XEvent *e);
 static void focusmode(const Arg *arg);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
+static void focustab(const Arg *arg);
 static void focustask(const Arg *arg);
 static Atom getatomprop(Client *c, Atom prop);
 static int getrootptr(int *x, int *y);
@@ -262,6 +269,8 @@ static void seturgent(Client *c, int urg);
 static void showhide(Client *c);
 static void spawn(const Arg *arg);
 static Monitor *systraytomon(Monitor *m);
+static void tabbed(Monitor *m);
+static void tabselect(Monitor *m);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
 static void tile(Monitor *m);
@@ -473,10 +482,15 @@ applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
 void
 arrange(Monitor *m)
 {
-	if (m)
+	if (m) {
+		if (m->lt[m->sellt]->arrange == tabbed)
+			tabselect(m);
 		showhide(m->stack);
-	else for (m = mons; m; m = m->next)
+	} else for (m = mons; m; m = m->next) {
+		if (m->lt[m->sellt]->arrange == tabbed)
+			tabselect(m);
 		showhide(m->stack);
+	}
 	if (m) {
 		arrangemon(m);
 		restack(m);
@@ -543,9 +557,21 @@ buttonpress(XEvent *e)
 	} else if ((c = wintoclient(ev->window))) {
 		focus(c);
 		restack(selmon);
-		if (ev->window == c->title)
-			click = ClkTitleBar;
-		else if (ev->window == c->frame)
+		if (ev->window == c->title) {
+			if (c->mon->lt[c->mon->sellt]->arrange == tabbed
+			&& c == c->mon->tabsel && !c->isfloating) {
+				for (i = 0; i < (unsigned int)c->mon->tabn; i++)
+					if (ev->x >= c->mon->tabx[i]
+					&& ev->x < c->mon->tabx[i] + c->mon->tabw[i]) {
+						click = ClkTab;
+						arg.i = (int)i;
+						break;
+					}
+				if (i == (unsigned int)c->mon->tabn)
+					click = ClkTitleBar;
+			} else
+				click = ClkTitleBar;
+		} else if (ev->window == c->frame)
 			click = ClkBorder;
 		else {
 			if (ev->window == c->win)
@@ -556,7 +582,7 @@ buttonpress(XEvent *e)
 	for (i = 0; i < LENGTH(buttons); i++)
 		if (click == buttons[i].click && buttons[i].func && buttons[i].button == ev->button
 		&& CLEANMASK(buttons[i].mask) == CLEANMASK(ev->state))
-			buttons[i].func(click == ClkTagBar || click == ClkTaskBar
+			buttons[i].func(click == ClkTagBar || click == ClkTaskBar || click == ClkTab
 				? &arg : &buttons[i].arg);
 }
 
@@ -1033,13 +1059,79 @@ drawtitle(Client *c, int focused)
 	int tw, pad = 8, avail, textw;
 	int urgent = c->isurgent;
 	unsigned int seltitle = urgent ? SchemeUrg : focused ? SchemeSel : SchemeNorm;
+	Client *t, *list[32];
+	int n = 0, i, idx = -1, cellw, tx, twi;
+	int istabbed;
 
 	if (!c->title || th <= 0)
 		return;
 	tw = c->w - 2 * c->bw;
 	if (tw <= 0)
 		return;
+	istabbed = c->mon->lt[c->mon->sellt]->arrange == tabbed;
 
+	if (istabbed && c == c->mon->tabsel && !c->isfloating) {
+		for (t = nexttiled(c->mon->clients); t && n < (int)LENGTH(list);
+		     t = nexttiled(t->next))
+			list[n++] = t;
+		if (n > 1) {
+			cellw = tw / n;
+			drw_setscheme(drw, scheme[SchemeNorm]);
+			drw_rect(drw, 0, 0, tw, th, 1, 1);
+			for (i = 0; i < n; i++) {
+				t = list[i];
+				tx = i * cellw;
+				twi = (i == n - 1) ? tw - tx : cellw;
+				c->mon->tabclients[i] = t;
+				c->mon->tabx[i] = tx;
+				c->mon->tabw[i] = twi;
+				if (t == c->mon->tabsel) {
+					idx = i;
+					drw_setscheme(drw, scheme[SchemeSel]);
+				} else
+					drw_setscheme(drw, scheme[SchemeNorm]);
+				drw_rect(drw, tx, 0, twi, th, 1, 1);
+				if (i > 0) {
+					drw_setscheme(drw, scheme[SchemeSeparator]);
+					drw_rect(drw, tx, 0, 1, th, 1, 0);
+				}
+				truncatechars(t->name, raw, sizeof raw, 64);
+				avail = twi - 12;
+				if (avail < 1)
+					title[0] = '\0';
+				else if (textwidth(raw) > avail)
+					truncatepx(raw, title, sizeof title, avail);
+				else
+					snprintf(title, sizeof title, "%s", raw);
+				textw = textwidth(title);
+				if (textw) {
+					drw_setscheme(drw, scheme[t == c->mon->tabsel
+						? SchemeSel : SchemeNorm]);
+					drw_text(drw, tx + 6, 0, textw, th, 0, title, 0);
+				}
+			}
+			c->mon->tabn = n;
+			if (idx >= 0) {
+				long tab[4] = {
+					(idx == 0) ? 0 : c->bw + c->mon->tabx[idx],
+					0,
+					c->mon->tabw[idx]
+						+ ((idx == 0) ? c->bw : 0)
+						+ ((idx == n - 1) ? c->bw : 0),
+					c->bw + titleheight
+				};
+				XChangeProperty(dpy, c->frame, netatom[NetDwmTab],
+					XA_CARDINAL, 32, PropModeReplace,
+					(unsigned char *)tab, 4);
+			}
+			drw_map(drw, c->title, 0, 0, tw, th);
+			return;
+		}
+		c->mon->tabn = 0;
+	}
+	XDeleteProperty(dpy, c->frame, netatom[NetDwmTab]);
+
+	/* single window title: left aligned, no icon */
 	truncatechars(c->name, raw, sizeof raw, 64);
 	avail = tw - 2 * pad;
 	if (avail < 1)
@@ -1310,12 +1402,19 @@ focus(Client *c)
 		grabbuttons(c, 1);
 		XSetWindowBorder(dpy, c->frame, scheme[c->isurgent ? SchemeUrg
 			: SchemeSel][ColBorder].pixel);
+		selmon->sel = c;
+		if (c->mon->lt[c->mon->sellt]->arrange == tabbed) {
+			if (!c->isfloating)
+				c->mon->tabsel = c;
+			/* Map the selected tab before giving it the keyboard. */
+			arrange(c->mon);
+		}
 		setfocus(c);
 	} else {
+		selmon->sel = NULL;
 		XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
 		XDeleteProperty(dpy, root, netatom[NetActiveWindow]);
 	}
-	selmon->sel = c;
 	drawbars();
 	if (c)
 		drawtitle(c, 1);
@@ -1386,6 +1485,20 @@ focustask(const Arg *arg)
 		return;
 	for (t = selmon->clients; t && t != c; t = t->next);
 	if (!t || !ISVISIBLE(c))
+		return;
+	focus(c);
+	restack(selmon);
+}
+
+void
+focustab(const Arg *arg)
+{
+	Client *c;
+
+	if (arg->i < 0 || arg->i >= selmon->tabn)
+		return;
+	c = selmon->tabclients[arg->i];
+	if (!c || !ISVISIBLE(c))
 		return;
 	focus(c);
 	restack(selmon);
@@ -1758,6 +1871,38 @@ maprequest(XEvent *e)
 		return;
 	if (!wintoclient(ev->window))
 		manage(ev->window, &wa);
+}
+
+void
+tabselect(Monitor *m)
+{
+	Client *c, *first = NULL;
+
+	if (!m || m->lt[m->sellt]->arrange != tabbed)
+		return;
+	for (c = nexttiled(m->clients); c; c = nexttiled(c->next)) {
+		if (!first)
+			first = c;
+		if (c == m->sel) {
+			m->tabsel = c;
+			return;
+		}
+	}
+	if (m->tabsel && m->tabsel->mon == m && ISVISIBLE(m->tabsel)
+	&& !m->tabsel->isfloating)
+		return;
+	m->tabsel = first;
+}
+
+void
+tabbed(Monitor *m)
+{
+	Client *c;
+
+	tabselect(m);
+	for (c = nexttiled(m->clients); c; c = nexttiled(c->next))
+		place(c, m->wx + gappo, m->wy + gappo,
+			m->ww - 2 * gappo, m->wh - 2 * gappo);
 }
 
 void
@@ -2356,6 +2501,8 @@ sendmon(Client *c, Monitor *m)
 	unfocus(c, 1);
 	detach(c);
 	detachstack(c);
+	if (c->mon->tabsel == c)
+		c->mon->tabsel = NULL;
 	c->mon = m;
 	c->tags = m->tagset[m->seltags]; /* assign tags of target monitor */
 	attach(c);
@@ -2609,6 +2756,7 @@ setup(void)
 	netatom[NetWMWindowType] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE", False);
 	netatom[NetWMWindowTypeDialog] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
 	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
+	netatom[NetDwmTab] = XInternAtom(dpy, "_DWM_TAB", False);
 	xatom[Manager] = XInternAtom(dpy, "MANAGER", False);
 	xatom[Xembed] = XInternAtom(dpy, "_XEMBED", False);
 	xatom[XembedInfo] = XInternAtom(dpy, "_XEMBED_INFO", False);
@@ -2672,9 +2820,12 @@ seturgent(Client *c, int urg)
 void
 showhide(Client *c)
 {
+	int tabs;
+
 	if (!c)
 		return;
-	if (ISVISIBLE(c)) {
+	tabs = c->mon->lt[c->mon->sellt]->arrange == tabbed;
+	if (ISVISIBLE(c) && (!tabs || c->isfloating || c == c->mon->tabsel)) {
 		/* show clients top down */
 		XMoveResizeWindow(dpy, c->frame, c->x, c->y,
 			c->w - 2 * c->bw, c->h - 2 * c->bw);
@@ -2942,6 +3093,10 @@ unmanage(Client *c, int destroyed)
 
 	detach(c);
 	detachstack(c);
+	if (m->tabsel == c)
+		m->tabsel = NULL;
+	if (m->sel == c)
+		m->sel = NULL;
 	if (!destroyed) {
 		int rx, ry;
 		Window child;
