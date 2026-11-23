@@ -145,6 +145,39 @@ if [ "${TAG_TEN:-0}" = 1 ]; then
 	xdotool key --clearmodifiers super+shift+0
 	sleep 0.4
 fi
+if [ -n "${TEST_CORNER:-}" ]; then
+	cc -O2 -o /tmp/parent test/parent.c -lX11
+	A=$(xdotool getactivewindow)
+	FP=$(/tmp/parent "$A")
+	FX=$(xwininfo -id "$FP" | awk '/Absolute upper-left X/ {print $4}')
+	FY=$(xwininfo -id "$FP" | awk '/Absolute upper-left Y/ {print $4}')
+	FW=$(xwininfo -id "$FP" | awk '/Width:/ {print $2}')
+	FH=$(xwininfo -id "$FP" | awk '/Height:/ {print $2}')
+	FB=$(xwininfo -id "$FP" | awk '/Border width/ {print $3}')
+	OW=$((FW + 2 * FB))
+	OH=$((FH + 2 * FB))
+	CW=$(xwininfo -id "$A" | awk '/Width:/ {print $2}')
+	CH=$(xwininfo -id "$A" | awk '/Height:/ {print $2}')
+	echo "before frame $FX,$FY ${OW}x${OH} client ${CW}x${CH}" >/out/corner-$TEST_CORNER.txt
+	case "$TEST_CORNER" in
+		TL) BX=$((FX + 2)); BY=$((FY + 2)); DX=100; DY=100 ;;
+		TR) BX=$((FX + OW - 3)); BY=$((FY + 2)); DX=-100; DY=100 ;;
+		BL) BX=$((FX + 2)); BY=$((FY + OH - 3)); DX=100; DY=-100 ;;
+		BR) BX=$((FX + OW - 3)); BY=$((FY + OH - 3)); DX=-100; DY=-100 ;;
+		*) BX=$((FX + OW / 2)); BY=$((FY + OH / 2)); DX=100; DY=100 ;;
+	esac
+	xdotool mousemove --sync $BX $BY mousedown 3
+	sleep 0.15
+	xdotool mousemove_relative -- $DX $DY
+	sleep 0.15
+	xdotool mouseup 3
+	sleep 0.4
+	CW=$(xwininfo -id "$A" | awk '/Width:/ {print $2}')
+	CH=$(xwininfo -id "$A" | awk '/Height:/ {print $2}')
+	echo "after client ${CW}x${CH}" >>/out/corner-$TEST_CORNER.txt
+	import -window root /out/corner-$TEST_CORNER.png
+fi
+
 if [ "${TEST_BORDERRESIZE:-0}" = 1 ]; then
 	cc -O2 -o /tmp/parent test/parent.c -lX11
 	A=$(xdotool getactivewindow)

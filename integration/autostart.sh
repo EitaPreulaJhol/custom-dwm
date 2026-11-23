@@ -16,7 +16,8 @@ fi
 
 # Focus outline helper (EWMH/X11; survives dwm restarts).
 if command -v i3-focus-outline >/dev/null 2>&1; then
-	pkill -x i3-focus-outline 2>/dev/null || true
+	# comm is truncated to 15 chars, so -x must use the truncated name
+	pkill -x i3-focus-outlin 2>/dev/null || true
 	i3-focus-outline >/dev/null 2>&1 &
 fi
 

@@ -10,8 +10,9 @@ the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
   with a 20px title bar (left-aligned title, no icon), the i3 5px border and
   the focused/unfocused/urgent colors. Dragging the title bar moves a floating
   window; `Mod`+dragging a tiled title floats it and follows the pointer;
-  Button2 toggles floating; Button3 resizes (also plain right-drag on the 5px
-  frame border).
+  Button2 toggles floating; Button3 resizes. Plain right-drag on the 5px
+  frame border resizes from that corner (or from that edge in the middle);
+  `Mod`+right-drag inside the window uses the nearest corner.
 - **Bar** — 20px, `#DEDEDE`/`#333333`, ten tags with the 1px orange frame on
   the selected one, occupied dot, `|` separator, clock and a 16px systray.
 - **Taskbar** — the current workspace's windows inside the bar, each with a
@@ -25,7 +26,9 @@ the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
   floating maximum size. Floating moves do not snap or re-apply size hints.
 - **Focus outline** — `../../Projects/i3-focus-outline-rs` was ported from i3 IPC to
   `_NET_ACTIVE_WINDOW`/X11, so it works under dwm (and still under i3). It
-  surrounds the whole frame, title bar included.
+  surrounds the whole frame, title bar included, and prefers the real X input
+  focus over a stale `_NET_ACTIVE_WINDOW` property, so the orange frame matches
+  the window that actually receives the keys.
 - **Session** — `integration/` has the once-per-session autostart, the clock,
   in-place restart, the exit confirmation and the `.desktop`/`.xinitrc` files.
 
@@ -103,7 +106,7 @@ exit, so `$mod+Shift+r` keeps all X clients and the helper processes alive.
 | `Mod`+title `Button1` | drag a tiled window (floats it) or move a floating one |
 | title bar `Button2` | toggle floating |
 | title bar `Button3` | resize |
-| frame border `Button3` | resize (plain right-drag; no modifier needed) |
+| frame border `Button3` | resize from that corner/edge (plain right-drag) |
 | `Mod`+border `Button1` / `Button3` | move / resize |
 | `Mod+b` | toggle the bar (dwm extension) |
 | `Mod+j`/`Mod+k`, `Mod+Return` | focus stack / zoom (dwm extensions) |
@@ -138,8 +141,8 @@ docker run --rm -v "$PWD":/src -v /tmp/dwm-out:/out \
 Test modes: `SHOW_CLIENTS=1` (three xmessages), `SHOW_ST=1` (four st
 terminals, for size-hint gaps), `SHOW_TRAY=1` (three fake XEmbed icons),
 `TEST_FLOAT=1`, `TEST_TILEDRAG=1`, `TEST_RESIZE=1`,
-`TEST_BORDERRESIZE=1`, `TEST_FULLSCREEN=1`, `TEST_TAGSWITCH=1`,
-`TEST_LAUNCHER=1`. `test/session.sh` covers autostart,
+`TEST_BORDERRESIZE=1`, `TEST_CORNER=TL|TR|BL|BR`, `TEST_FULLSCREEN=1`,
+`TEST_TAGSWITCH=1`, `TEST_LAUNCHER=1`. `test/session.sh` covers autostart,
 restart and the floating exit dialog.
 
 Against `based_on/base_looks.png` (same date string, no client windows) the

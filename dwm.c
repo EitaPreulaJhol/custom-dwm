@@ -85,6 +85,7 @@ enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms *
 enum { ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkBorder, ClkTitleBar, ClkRootWin, ClkLast }; /* clicks */
 enum { ModeNormal, ModeResize, ModeMove }; /* binding modes */
 enum { DirLeft, DirDown, DirUp, DirRight }; /* directions */
+enum { RLeft = 1, RRight = 2, RTop = 4, RBottom = 8 }; /* resize anchors */
 
 typedef union {
 	int i;
@@ -2108,7 +2109,8 @@ resizerequest(XEvent *e)
 void
 resizemouse(const Arg *arg)
 {
-	int ocx, ocy, nw, nh;
+	int x, y, ocx, ocy, ocw, och, nx, ny, nw, nh, anchor;
+	int dl, dr, dt, db, near_left, near_right, near_top, near_bottom, edges;
 	Client *c;
 	Monitor *m;
 	XEvent ev;
@@ -2121,11 +2123,50 @@ resizemouse(const Arg *arg)
 	restack(selmon);
 	ocx = c->x;
 	ocy = c->y;
+	ocw = c->w;
+	och = c->h;
+	if (!getrootptr(&x, &y))
+		return;
+
+	/* Which corner/edge did the pointer grab? A click on the 5px frame
+	 * border is precise; a Mod+right drag inside the window uses the
+	 * nearest corner. */
+	dl = x - ocx;
+	dr = ocx + ocw - 1 - x;
+	dt = y - ocy;
+	db = ocy + och - 1 - y;
+	near_left = dl <= 10;
+	near_right = dr <= 10;
+	near_top = dt <= 10;
+	near_bottom = db <= 10;
+	edges = near_left + near_right + near_top + near_bottom;
+	if (edges >= 2) {
+		anchor = (near_left ? RLeft : RRight) | (near_top ? RTop : RBottom);
+	} else if (edges == 1) {
+		anchor = near_left ? RLeft : near_right ? RRight : near_top ? RTop : RBottom;
+	} else {
+		anchor = (x < ocx + ocw / 2 ? RLeft : RRight)
+			| (y < ocy + och / 2 ? RTop : RBottom);
+	}
+
 	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
 		None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
 		return;
-	XWarpPointer(dpy, None, c->frame, 0, 0, 0, 0,
-		c->w - c->bw - 1, c->h - c->bw - 1);
+
+	/* Put the pointer on the grabbed corner/edge so the first motion delta
+	 * starts from the opposite fixed edge. */
+	nx = x;
+	ny = y;
+	if (anchor & RLeft)
+		nx = ocx;
+	else if (anchor & RRight)
+		nx = ocx + ocw - 1;
+	if (anchor & RTop)
+		ny = ocy;
+	else if (anchor & RBottom)
+		ny = ocy + och - 1;
+	XWarpPointer(dpy, None, root, 0, 0, 0, 0, nx, ny);
+
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
 		switch(ev.type) {
@@ -2139,22 +2180,45 @@ resizemouse(const Arg *arg)
 				continue;
 			lasttime = ev.xmotion.time;
 
-			nw = MAX(ev.xmotion.x - ocx + 1, 1);
-			nh = MAX(ev.xmotion.y - ocy + 1, 1);
-			if (c->mon->wx + nw >= selmon->wx && c->mon->wx + nw <= selmon->wx + selmon->ww
-			&& c->mon->wy + nh >= selmon->wy && c->mon->wy + nh <= selmon->wy + selmon->wh)
-			{
-				if (!c->isfloating && selmon->lt[selmon->sellt]->arrange
-				&& (abs(nw - c->w) > snap || abs(nh - c->h) > snap))
-					togglefloating(NULL);
+			nx = ocx;
+			ny = ocy;
+			nw = ocw;
+			nh = och;
+			if (anchor & RLeft) {
+				nx = ev.xmotion.x_root;
+				nw = ocx + ocw - nx;
+			} else if (anchor & RRight) {
+				nw = ev.xmotion.x_root - ocx + 1;
 			}
-			if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
-				resize(c, c->x, c->y, nw, nh, 1);
+			if (anchor & RTop) {
+				ny = ev.xmotion.y_root;
+				nh = ocy + och - ny;
+			} else if (anchor & RBottom) {
+				nh = ev.xmotion.y_root - ocy + 1;
+			}
+			if (nw < 1)
+				nw = 1;
+			if (nh < 1)
+				nh = 1;
+			/* Keep the fixed edge fixed when the moving edge crosses it. */
+			if (nw < 2 * c->bw + 1) {
+				if (anchor & RLeft)
+					nx = ocx + ocw - (2 * c->bw + 1);
+				nw = 2 * c->bw + 1;
+			}
+			if (nh < 2 * c->bw + titleheight + 1) {
+				if (anchor & RTop)
+					ny = ocy + och - (2 * c->bw + titleheight + 1);
+				nh = 2 * c->bw + titleheight + 1;
+			}
+			if (!c->isfloating && c->mon->lt[c->mon->sellt]->arrange
+			&& (abs(nw - c->w) > snap || abs(nh - c->h) > snap))
+				togglefloating(NULL);
+			if (!c->mon->lt[c->mon->sellt]->arrange || c->isfloating)
+				resize(c, nx, ny, nw, nh, 1);
 			break;
 		}
 	} while (ev.type != ButtonRelease);
-	XWarpPointer(dpy, None, c->frame, 0, 0, 0, 0,
-		c->w - c->bw - 1, c->h - c->bw - 1);
 	XUngrabPointer(dpy, CurrentTime);
 	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
 	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
