@@ -7,17 +7,19 @@ the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
 ## What is here
 
 - **Title bars** — every client is reparented into an override-redirect frame
-  with a 20px title bar (Nerd Font icon + centered title), the i3 5px border
-  and the focused/unfocused/urgent colors. Dragging the title bar moves a
-  floating window; `Mod`+dragging a tiled title floats it and follows the
-  pointer; Button2 toggles floating; `Mod`+Button3 resizes.
+  with a 20px title bar (left-aligned title, no icon), the i3 5px border and
+  the focused/unfocused/urgent colors. Dragging the title bar moves a floating
+  window; `Mod`+dragging a tiled title floats it and follows the pointer;
+  Button2 toggles floating; Button3 resizes (also plain right-drag on the 5px
+  frame border).
 - **Bar** — 20px, `#DEDEDE`/`#333333`, ten tags with the 1px orange frame on
   the selected one, occupied dot, `|` separator, clock and a 16px systray.
 - **Taskbar** — the current workspace's windows inside the bar, each with a
   Nerd Font icon, title, and a 1px orange border on the focused one.
 - **Layouts** — `tile` (splith), `tilev` (splitv), two monocle variants for
-  stacking/tabbed, floating, with 10px inner gaps and 0 outer gaps. The frames
-  make the gaps exact even for terminals with size hints.
+  stacking/tabbed, floating, with 10px inner gaps and a 10px gap on all four
+  monitor edges (a maximized window keeps the same frame on every side). The
+  frames make the gaps exact even for terminals with size hints.
 - **Controls** — every binding from `based_on/i3_base_config`, including
   `resize`/`move` modes, `back_and_forth`, directional focus/move, and the
   floating maximum size. Floating moves do not snap or re-apply size hints.
@@ -27,10 +29,10 @@ the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
 - **Session** — `integration/` has the once-per-session autostart, the clock,
   in-place restart, the exit confirmation and the `.desktop`/`.xinitrc` files.
 
-Known gaps: the title icon is a Nerd Font glyph from `iconrules[]`, not the
-application's `_NET_WM_ICON`; h/v split is approximated by the two tile
-layouts (no i3 tree); the i3 outline tab notch is gone; and a process restart
-(dwm has no in-process restart) assigns hidden clients to the current tag.
+Known gaps: h/v split is approximated by the two tile layouts (no i3 tree);
+the i3 outline tab notch is gone; and a process restart (dwm has no in-process
+restart) assigns hidden clients to the current tag. The taskbar icons are Nerd
+Font glyphs from `iconrules[]`, like the reference polybar.
 
 ## Build
 
@@ -100,7 +102,9 @@ exit, so `$mod+Shift+r` keeps all X clients and the helper processes alive.
 | title bar `Button1` | focus; drag a floating window |
 | `Mod`+title `Button1` | drag a tiled window (floats it) or move a floating one |
 | title bar `Button2` | toggle floating |
-| `Mod`+title `Button3` | resize |
+| title bar `Button3` | resize |
+| frame border `Button3` | resize (plain right-drag; no modifier needed) |
+| `Mod`+border `Button1` / `Button3` | move / resize |
 | `Mod+b` | toggle the bar (dwm extension) |
 | `Mod+j`/`Mod+k`, `Mod+Return` | focus stack / zoom (dwm extensions) |
 
@@ -133,8 +137,9 @@ docker run --rm -v "$PWD":/src -v /tmp/dwm-out:/out \
 
 Test modes: `SHOW_CLIENTS=1` (three xmessages), `SHOW_ST=1` (four st
 terminals, for size-hint gaps), `SHOW_TRAY=1` (three fake XEmbed icons),
-`TEST_FLOAT=1`, `TEST_TILEDRAG=1`, `TEST_RESIZE=1`, `TEST_FULLSCREEN=1`,
-`TEST_TAGSWITCH=1`, `TEST_LAUNCHER=1`. `test/session.sh` covers autostart,
+`TEST_FLOAT=1`, `TEST_TILEDRAG=1`, `TEST_RESIZE=1`,
+`TEST_BORDERRESIZE=1`, `TEST_FULLSCREEN=1`, `TEST_TAGSWITCH=1`,
+`TEST_LAUNCHER=1`. `test/session.sh` covers autostart,
 restart and the floating exit dialog.
 
 Against `based_on/base_looks.png` (same date string, no client windows) the

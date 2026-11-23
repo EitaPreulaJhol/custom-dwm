@@ -15,7 +15,7 @@ static const int topbar             = 1;        /* 0 means bottom bar */
 static const int barheight          = 20;       /* bar height in pixels (polybar theme.ini) */
 static const int titleheight        = 20;       /* per-window title bar (i3 border normal) */
 static const int gappx              = 10;       /* gaps between windows (i3: gaps inner 10, outer 0) */
-static const int gappo              = 0;        /* gaps around the monitor edge (i3: gaps outer 0) */
+static const int gappo              = 10;       /* gaps around the monitor edge (uniform with inner) */
 static const int floatmaxw          = 1310;     /* i3: floating_maximum_size 1310x710 */
 static const int floatmaxh          = 710;
 static const char *fonts[]          = { "Sans:pixelsize=12", "Symbols Nerd Font Mono:pixelsize=12" };
@@ -224,7 +224,12 @@ static const Button buttons[] = {
 	{ ClkTaskBar,           0,              Button1,        focustask,      {0} },
 	{ ClkTaskBar,           MODKEY,         Button2,        zoom,           {0} },
 	{ ClkStatusText,        0,              Button1,        spawn,          {.v = calendarcmd } },
-	{ ClkTitleBar,          0,              Button1,        titleclick,     {0} },
+	{ ClkBorder,           0,              Button3,        resizemouse,    {0} },
+	{ ClkBorder,           MODKEY,         Button1,        movemouse,      {0} },
+	{ ClkBorder,           MODKEY,         Button3,        resizemouse,    {0} },
+	{ ClkBorder,           0,              Button2,        togglefloating, {0} },
+	{ ClkTitleBar,         0,              Button1,        titleclick,     {0} },
+	{ ClkTitleBar,         0,              Button3,        resizemouse,    {0} },
 	{ ClkTitleBar,          MODKEY,         Button1,        movemouse,      {0} },
 	{ ClkTitleBar,          0,              Button2,        togglefloating, {0} },
 	{ ClkTitleBar,          MODKEY,         Button3,        resizemouse,    {0} },

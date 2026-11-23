@@ -145,6 +145,32 @@ if [ "${TAG_TEN:-0}" = 1 ]; then
 	xdotool key --clearmodifiers super+shift+0
 	sleep 0.4
 fi
+if [ "${TEST_BORDERRESIZE:-0}" = 1 ]; then
+	cc -O2 -o /tmp/parent test/parent.c -lX11
+	A=$(xdotool getactivewindow)
+	FP=$(/tmp/parent "$A")
+	FX=$(xwininfo -id "$FP" | awk '/Absolute upper-left X/ {print $4}')
+	FY=$(xwininfo -id "$FP" | awk '/Absolute upper-left Y/ {print $4}')
+	FW=$(xwininfo -id "$FP" | awk '/Width:/ {print $2}')
+	FH=$(xwininfo -id "$FP" | awk '/Height:/ {print $2}')
+	FB=$(xwininfo -id "$FP" | awk '/Border width/ {print $3}')
+	CW=$(xwininfo -id "$A" | awk '/Width:/ {print $2}')
+	CH=$(xwininfo -id "$A" | awk '/Height:/ {print $2}')
+	echo "before frame $FX,$FY ${FW}x${FH} bw=$FB client ${CW}x${CH}" >/out/borderresize.txt
+	BX=$((FX + FW + FB + 2))
+	BY=$((FY + FH / 2))
+	xdotool mousemove --sync $BX $BY mousedown 3
+	sleep 0.15
+	xdotool mousemove_relative -- -100 0
+	sleep 0.15
+	xdotool mouseup 3
+	sleep 0.4
+	CW=$(xwininfo -id "$A" | awk '/Width:/ {print $2}')
+	CH=$(xwininfo -id "$A" | awk '/Height:/ {print $2}')
+	echo "after client ${CW}x${CH}" >>/out/borderresize.txt
+	import -window root /out/borderresize.png
+fi
+
 if [ "${TEST_RESIZE:-0}" = 1 ]; then
 	xdotool key --clearmodifiers super+space
 	sleep 0.3

@@ -82,7 +82,7 @@ enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMWindowTypeDialog, NetClientList, NetLast }; /* EWMH atoms */
 enum { Manager, Xembed, XembedInfo, XLast }; /* Xembed atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
-enum { ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkTitleBar, ClkRootWin, ClkLast }; /* clicks */
+enum { ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkBorder, ClkTitleBar, ClkRootWin, ClkLast }; /* clicks */
 enum { ModeNormal, ModeResize, ModeMove }; /* binding modes */
 enum { DirLeft, DirDown, DirUp, DirRight }; /* directions */
 
@@ -544,6 +544,8 @@ buttonpress(XEvent *e)
 		restack(selmon);
 		if (ev->window == c->title)
 			click = ClkTitleBar;
+		else if (ev->window == c->frame)
+			click = ClkBorder;
 		else {
 			if (ev->window == c->win)
 				XAllowEvents(dpy, ReplayPointer, CurrentTime);
@@ -1026,12 +1028,10 @@ void
 drawtitle(Client *c, int focused)
 {
 	char raw[512], title[512];
-	const char *icon;
 	int th = c->isfullscreen ? 0 : titleheight;
-	int tw, pad = 6, iconw = 0, spacew = 0, avail, textw, total, x;
+	int tw, pad = 8, avail, textw;
 	int urgent = c->isurgent;
 	unsigned int seltitle = urgent ? SchemeUrg : focused ? SchemeSel : SchemeNorm;
-	unsigned int selicon = urgent ? SchemeIconUrg : focused ? SchemeIconSel : SchemeIcon;
 
 	if (!c->title || th <= 0)
 		return;
@@ -1039,13 +1039,8 @@ drawtitle(Client *c, int focused)
 	if (tw <= 0)
 		return;
 
-	icon = iconfor(c);
-	if (icon && *icon) {
-		iconw = textwidth(icon);
-		spacew = textwidth(" ");
-	}
 	truncatechars(c->name, raw, sizeof raw, 64);
-	avail = tw - 2 * pad - iconw - spacew;
+	avail = tw - 2 * pad;
 	if (avail < 1)
 		title[0] = '\0';
 	else if (textwidth(raw) > avail)
@@ -1055,24 +1050,9 @@ drawtitle(Client *c, int focused)
 
 	drw_setscheme(drw, scheme[seltitle]);
 	drw_rect(drw, 0, 0, tw, th, 1, 1);
-
 	textw = textwidth(title);
-	total = iconw + spacew + textw;
-	x = (tw - total) / 2;
-	if (x < pad)
-		x = pad;
-	if (iconw) {
-		drw_setscheme(drw, scheme[selicon]);
-		drw_text(drw, x, 0, iconw, th, 0, icon, 0);
-		x += iconw;
-		drw_setscheme(drw, scheme[seltitle]);
-		drw_text(drw, x, 0, spacew, th, 0, " ", 0);
-		x += spacew;
-	}
-	if (textw) {
-		drw_setscheme(drw, scheme[seltitle]);
-		drw_text(drw, x, 0, textw, th, 0, title, 0);
-	}
+	if (textw)
+		drw_text(drw, pad, 0, textw, th, 0, title, 0);
 	drw_map(drw, c->title, 0, 0, tw, th);
 }
 
@@ -1791,7 +1771,8 @@ monocle(Monitor *m)
 	if (n > 0) /* override layout symbol */
 		snprintf(m->ltsymbol, sizeof m->ltsymbol, "[%d]", n);
 	for (c = nexttiled(m->clients); c; c = nexttiled(c->next))
-		resize(c, m->wx, m->wy, m->ww, m->wh, 0);
+		resize(c, m->wx + gappo, m->wy + gappo,
+			m->ww - 2 * gappo, m->wh - 2 * gappo, 0);
 }
 
 void
@@ -2687,39 +2668,41 @@ tile(Monitor *m)
 {
 	unsigned int i, n, nm, ns;
 	int g = gappx, half = g / 2, mw = 0, sx, sw, y, h, avail;
+	int wx = m->wx + gappo, wy = m->wy + gappo;
+	int ww = m->ww - 2 * gappo, wh = m->wh - 2 * gappo;
 	Client *c;
 
 	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++);
-	if (n == 0)
+	if (n == 0 || ww < 1 || wh < 1)
 		return;
 	nm = MIN(n, (unsigned int)m->nmaster);
 	ns = n - nm;
 
 	if (nm && ns) {
-		mw = (int)(m->ww * m->mfact) - half;
-		sx = m->wx + (int)(m->ww * m->mfact) + half;
-		sw = m->ww - (int)(m->ww * m->mfact) - half;
+		mw = (int)(ww * m->mfact) - half;
+		sx = wx + (int)(ww * m->mfact) + half;
+		sw = ww - (int)(ww * m->mfact) - half;
 	} else {
-		sx = m->wx;
-		sw = m->ww;
+		sx = wx;
+		sw = ww;
 		if (nm)
-			mw = m->ww;
+			mw = ww;
 	}
 
 	i = 0;
-	y = m->wy;
-	avail = m->wh - (nm > 1 ? (int)(nm - 1) * g : 0);
+	y = wy;
+	avail = wh - (nm > 1 ? (int)(nm - 1) * g : 0);
 	for (c = nexttiled(m->clients); c && i < nm; c = nexttiled(c->next), i++) {
-		h = (i == nm - 1) ? (m->wy + m->wh - y) : avail / (int)nm;
-		place(c, m->wx, y, mw, h);
+		h = (i == nm - 1) ? (wy + wh - y) : avail / (int)nm;
+		place(c, wx, y, mw, h);
 		y += h + g;
 	}
 
 	i = 0;
-	y = m->wy;
-	avail = m->wh - (ns > 1 ? (int)(ns - 1) * g : 0);
+	y = wy;
+	avail = wh - (ns > 1 ? (int)(ns - 1) * g : 0);
 	for (; c; c = nexttiled(c->next), i++) {
-		h = (i == ns - 1) ? (m->wy + m->wh - y) : avail / (int)ns;
+		h = (i == ns - 1) ? (wy + wh - y) : avail / (int)ns;
 		place(c, sx, y, sw, h);
 		y += h + g;
 	}
@@ -2731,39 +2714,41 @@ tilev(Monitor *m)
 {
 	unsigned int i, n, nm, ns;
 	int g = gappx, half = g / 2, mh = 0, sy, sh, x, w, avail;
+	int wx = m->wx + gappo, wy = m->wy + gappo;
+	int ww = m->ww - 2 * gappo, wh = m->wh - 2 * gappo;
 	Client *c;
 
 	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++);
-	if (n == 0)
+	if (n == 0 || ww < 1 || wh < 1)
 		return;
 	nm = MIN(n, (unsigned int)m->nmaster);
 	ns = n - nm;
 
 	if (nm && ns) {
-		mh = (int)(m->wh * m->mfact) - half;
-		sy = m->wy + (int)(m->wh * m->mfact) + half;
-		sh = m->wh - (int)(m->wh * m->mfact) - half;
+		mh = (int)(wh * m->mfact) - half;
+		sy = wy + (int)(wh * m->mfact) + half;
+		sh = wh - (int)(wh * m->mfact) - half;
 	} else {
-		sy = m->wy;
-		sh = m->wh;
+		sy = wy;
+		sh = wh;
 		if (nm)
-			mh = m->wh;
+			mh = wh;
 	}
 
 	i = 0;
-	x = m->wx;
-	avail = m->ww - (nm > 1 ? (int)(nm - 1) * g : 0);
+	x = wx;
+	avail = ww - (nm > 1 ? (int)(nm - 1) * g : 0);
 	for (c = nexttiled(m->clients); c && i < nm; c = nexttiled(c->next), i++) {
-		w = (i == nm - 1) ? (m->wx + m->ww - x) : avail / (int)nm;
-		place(c, x, m->wy, w, mh);
+		w = (i == nm - 1) ? (wx + ww - x) : avail / (int)nm;
+		place(c, x, wy, w, mh);
 		x += w + g;
 	}
 
 	i = 0;
-	x = m->wx;
-	avail = m->ww - (ns > 1 ? (int)(ns - 1) * g : 0);
+	x = wx;
+	avail = ww - (ns > 1 ? (int)(ns - 1) * g : 0);
 	for (; c; c = nexttiled(c->next), i++) {
-		w = (i == ns - 1) ? (m->wx + m->ww - x) : avail / (int)ns;
+		w = (i == ns - 1) ? (wx + ww - x) : avail / (int)ns;
 		place(c, x, sy, w, sh);
 		x += w + g;
 	}
