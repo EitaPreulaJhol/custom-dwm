@@ -21,6 +21,7 @@ while :; do
 		rm -f "$HOME/.dwm/exit"
 		break
 	fi
-	# Avoid a hot loop if dwm cannot start at all.
-	sleep 0.2
+	# Give the X server time to process the old connection's save-set
+	# reparenting before the new dwm scans the root window.
+	sleep 0.5
 done

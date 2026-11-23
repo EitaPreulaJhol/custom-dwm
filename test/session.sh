@@ -53,9 +53,12 @@ sleep 0.8
 import -window root /out/exit-dialog.png
 xwininfo -root -tree >/out/session-tree.txt 2>&1
 
-# Click the "Yes" button (the default is "No").
-eval "$(xdotool search --name '^dwm-exit$' getwindowgeometry --shell | sed 's/^/export /')"
-xdotool mousemove $((X + 24)) $((Y + 44)) click 1
+# Click the "Yes" button (the default is "No"). xdotool reports the client
+# position with a title-bar offset, so use xwininfo's absolute coordinates.
+DLG=$(xdotool search --name '^dwm-exit$' | head -1)
+DX=$(xwininfo -id "$DLG" | awk '/Absolute upper-left X/ {print $4}')
+DY=$(xwininfo -id "$DLG" | awk '/Absolute upper-left Y/ {print $4}')
+xdotool mousemove $((DX + 17)) $((DY + 37)) click 1
 sleep 1
 
 if pgrep -x dwm >/dev/null; then

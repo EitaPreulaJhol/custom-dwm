@@ -3,7 +3,7 @@
 
 /* appearance */
 static const unsigned int borderpx  = 5;        /* border pixel of windows (i3: border normal 5) */
-static const unsigned int snap      = 32;       /* snap pixel */
+static const unsigned int snap      = 0;        /* snap pixel (0 = free movement, like i3) */
 static const unsigned int systraypinning = 0;   /* 0: sloppy systray follows selected monitor, >0: pin systray to monitor X */
 static const unsigned int systrayonleft = 0;    /* 0: systray in the right corner, >0: systray on left of status text */
 static const unsigned int systrayspacing = 2;   /* systray spacing (i3/polybar reference: 2px) */
@@ -13,6 +13,7 @@ static const int systrayicon         = 16;       /* tray icon size (polybar tray
 static const int showbar            = 1;        /* 0 means no bar */
 static const int topbar             = 1;        /* 0 means bottom bar */
 static const int barheight          = 20;       /* bar height in pixels (polybar theme.ini) */
+static const int titleheight        = 20;       /* per-window title bar (i3 border normal) */
 static const int gappx              = 10;       /* gaps between windows (i3: gaps inner 10, outer 0) */
 static const int gappo              = 0;        /* gaps around the monitor edge (i3: gaps outer 0) */
 static const int floatmaxw          = 1310;     /* i3: floating_maximum_size 1310x710 */
@@ -67,7 +68,7 @@ static const Rule rules[] = {
 /* layout(s) */
 static const float mfact     = 0.55; /* factor of master area size [0.05..0.95] */
 static const int nmaster     = 1;    /* number of clients in master area */
-static const int resizehints = 1;    /* 1 means respect size hints in tiled resizals */
+static const int resizehints = 0;    /* 0 = exact tiling cells (consistent gaps) */
 static const int lockfullscreen = 1; /* 1 will force focus on the fullscreen window */
 static const int refreshrate = 120;  /* refresh rate (per second) for client move/resize */
 
@@ -223,6 +224,10 @@ static const Button buttons[] = {
 	{ ClkTaskBar,           0,              Button1,        focustask,      {0} },
 	{ ClkTaskBar,           MODKEY,         Button2,        zoom,           {0} },
 	{ ClkStatusText,        0,              Button1,        spawn,          {.v = calendarcmd } },
+	{ ClkTitleBar,          0,              Button1,        titleclick,     {0} },
+	{ ClkTitleBar,          MODKEY,         Button1,        movemouse,      {0} },
+	{ ClkTitleBar,          0,              Button2,        togglefloating, {0} },
+	{ ClkTitleBar,          MODKEY,         Button3,        resizemouse,    {0} },
 	{ ClkClientWin,         MODKEY,         Button1,        movemouse,      {0} },
 	{ ClkClientWin,         MODKEY,         Button2,        togglefloating, {0} },
 	{ ClkClientWin,         MODKEY,         Button3,        resizemouse,    {0} },

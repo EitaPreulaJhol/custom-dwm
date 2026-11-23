@@ -66,6 +66,13 @@ else
 fi
 
 mkdir -p /out
+if [ "${SHOW_ST:-0}" = 1 ]; then
+	for i in 1 2 3 4; do
+		st -e sleep 30 >/dev/null 2>&1 &
+	done
+	sleep 0.8
+fi
+
 if [ "${SHOW_CLIENTS:-0}" = 1 ]; then
 	xmessage -name 'st-256color' -title 'notes.txt - vim' -geometry 400x300+20+60 \
 		'first window' >/dev/null 2>&1 &
@@ -76,10 +83,94 @@ if [ "${SHOW_CLIENTS:-0}" = 1 ]; then
 	sleep 0.8
 fi
 
+if [ "${TEST_FLOAT:-0}" = 1 ]; then
+	xdotool key --clearmodifiers super+space
+	sleep 0.3
+	A=$(xdotool getactivewindow)
+	X=$(xwininfo -id "$A" | awk '/Absolute upper-left X/ {print $4}')
+	Y=$(xwininfo -id "$A" | awk '/Absolute upper-left Y/ {print $4}')
+	W=$(xwininfo -id "$A" | awk '/Width:/ {print $2}')
+	H=$(xwininfo -id "$A" | awk '/Height:/ {print $2}')
+	echo "before $X $Y ${W}x${H}" >/out/float.txt
+	# client content is at (X,Y); the title bar is the 20px above it
+	xdotool mousemove $((X + 100)) $((Y - 10)) mousedown 1
+	sleep 0.1
+	xdotool mousemove_relative -- 120 60
+	sleep 0.1
+	xdotool mouseup 1
+	sleep 0.3
+	A=$(xdotool getactivewindow)
+	X=$(xwininfo -id "$A" | awk '/Absolute upper-left X/ {print $4}')
+	Y=$(xwininfo -id "$A" | awk '/Absolute upper-left Y/ {print $4}')
+	W=$(xwininfo -id "$A" | awk '/Width:/ {print $2}')
+	H=$(xwininfo -id "$A" | awk '/Height:/ {print $2}')
+	echo "after $X $Y ${W}x${H}" >>/out/float.txt
+	import -window root /out/float.png
+fi
+
+if [ "${TEST_TILEDRAG:-0}" = 1 ]; then
+	A=$(xdotool getactivewindow)
+	X=$(xwininfo -id "$A" | awk '/Absolute upper-left X/ {print $4}')
+	Y=$(xwininfo -id "$A" | awk '/Absolute upper-left Y/ {print $4}')
+	W=$(xwininfo -id "$A" | awk '/Width:/ {print $2}')
+	H=$(xwininfo -id "$A" | awk '/Height:/ {print $2}')
+	echo "before $X $Y ${W}x${H}" >/out/tiledrag.txt
+	xdotool keydown super
+	xdotool mousemove $((X + 100)) $((Y - 10)) mousedown 1
+	sleep 0.1
+	xdotool mousemove_relative -- 120 60
+	sleep 0.1
+	xdotool mouseup 1
+	xdotool keyup super
+	sleep 0.4
+	A=$(xdotool getactivewindow)
+	X=$(xwininfo -id "$A" | awk '/Absolute upper-left X/ {print $4}')
+	Y=$(xwininfo -id "$A" | awk '/Absolute upper-left Y/ {print $4}')
+	W=$(xwininfo -id "$A" | awk '/Width:/ {print $2}')
+	H=$(xwininfo -id "$A" | awk '/Height:/ {print $2}')
+	echo "after $X $Y ${W}x${H}" >>/out/tiledrag.txt
+	import -window root /out/tiledrag.png
+fi
+
+if [ "${TEST_TAGSWITCH:-0}" = 1 ]; then
+	xdotool key --clearmodifiers super+2
+	sleep 0.4
+	import -window root /out/tag2.png
+	xdotool key --clearmodifiers super+1
+	sleep 0.4
+	import -window root /out/tagback.png
+fi
+
 if [ "${TAG_TEN:-0}" = 1 ]; then
 	xdotool key --clearmodifiers super+shift+0
 	sleep 0.4
 fi
+if [ "${TEST_RESIZE:-0}" = 1 ]; then
+	xdotool key --clearmodifiers super+space
+	sleep 0.3
+	A=$(xdotool getactivewindow)
+	X=$(xwininfo -id "$A" | awk '/Absolute upper-left X/ {print $4}')
+	Y=$(xwininfo -id "$A" | awk '/Absolute upper-left Y/ {print $4}')
+	W=$(xwininfo -id "$A" | awk '/Width:/ {print $2}')
+	H=$(xwininfo -id "$A" | awk '/Height:/ {print $2}')
+	echo "before $X $Y ${W}x${H}" >/out/resize.txt
+	xdotool keydown super
+	xdotool mousemove $((X + 300)) $((Y + 300)) mousedown 3
+	sleep 0.1
+	xdotool mousemove_relative -- -100 -100
+	sleep 0.1
+	xdotool mouseup 3
+	xdotool keyup super
+	sleep 0.4
+	A=$(xdotool getactivewindow)
+	X=$(xwininfo -id "$A" | awk '/Absolute upper-left X/ {print $4}')
+	Y=$(xwininfo -id "$A" | awk '/Absolute upper-left Y/ {print $4}')
+	W=$(xwininfo -id "$A" | awk '/Width:/ {print $2}')
+	H=$(xwininfo -id "$A" | awk '/Height:/ {print $2}')
+	echo "after $X $Y ${W}x${H}" >>/out/resize.txt
+	import -window root /out/resize.png
+fi
+
 if [ "${TEST_FULLSCREEN:-0}" = 1 ]; then
 	xdotool key --clearmodifiers super+shift+f
 	sleep 0.5
