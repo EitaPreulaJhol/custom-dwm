@@ -14,6 +14,7 @@ install -m755 "$here/autostart.sh"  "$dest/autostart.sh"
 install -m755 "$here/dwm-clock"     "$dest/dwm-clock"
 install -m755 "$here/dwm-restart"   "$dest/dwm-restart"
 install -m755 "$here/dwm-exit"      "$dest/dwm-exit"
+install -m755 "$here/xsession"      "$dest/xsession"
 
 # dwm spawns these two by name (config.h), so expose them on PATH.
 ln -sf "$dest/dwm-restart" "$bindir/dwm-restart"
@@ -24,6 +25,15 @@ ln -sf "$dest/dwm-session" "$bindir/dwm-session"
 sed "s|@SESSION@|$dest/dwm-session|g" "$here/dwm.desktop.in" \
 	> "$HOME/.local/share/xsessions/dwm.desktop"
 
+# Without a display manager, startx uses ~/.xsession (via /etc/X11/Xsession).
+# Never overwrite an existing session file.
+if [ -e "$HOME/.xsession" ]; then
+	echo "~/.xsession exists; left untouched (template: $dest/xsession)"
+else
+	install -m755 "$dest/xsession" "$HOME/.xsession"
+	echo "Installed ~/.xsession (startx -> dwm, SESSION=i3 startx -> i3)"
+fi
+
 cat <<EOF
 Installed:
   $dest/dwm-session
@@ -31,13 +41,19 @@ Installed:
   $dest/dwm-clock
   $dest/dwm-restart
   $dest/dwm-exit
+  $dest/xsession
   $HOME/.local/share/xsessions/dwm.desktop
+
+Without a display manager, startx reads ~/.xsession:
+  startx                 # dwm
+  SESSION=i3 startx      # i3
 
 Next steps:
   1. Install the WM binary:  make install-local  (or: sudo make clean install)
   2. Install the focus outline:        (cd ../../Projects/i3-focus-outline-rs && make install)
-  3. Log in with the "dwm" session, or put this in ~/.xinitrc:
-         exec "\$HOME/.dwm/dwm-session"
+  3. Log in with the "dwm" session, or (no DM) just run:
+         startx                 # dwm
+         SESSION=i3 startx      # i3
 
 The autostart script expects dwm, i3-focus-outline and dwm-clock to be on PATH.
 For a system-wide xsessions entry (display managers that ignore ~/.local):

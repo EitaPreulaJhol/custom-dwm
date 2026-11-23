@@ -1,0 +1,20 @@
+#!/bin/sh
+# Session selector for startx (no display manager).
+#
+#   startx                 -> dwm session
+#   SESSION=i3 startx      -> the i3 session
+#
+# Installed as ~/.xsession; /etc/X11/Xsession runs it after the Xsession.d
+# setup (dbus, xrdb, ssh-agent, ...).
+case "${SESSION:-dwm}" in
+	dwm)
+		exec "$HOME/.dwm/dwm-session"
+		;;
+	i3)
+		exec /usr/bin/i3
+		;;
+	*)
+		echo "SESSION must be 'dwm' or 'i3' (got '$SESSION')" >&2
+		exit 1
+		;;
+esac

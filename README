@@ -54,14 +54,17 @@ Session helpers (per user):
 ./integration/install.sh
 ```
 
-Then log in through the `dwm` session entry, or put
+With a display manager, log in through the `dwm` session entry. Without one,
+`startx` reads `~/.xsession` (installed by `integration/install.sh`):
 
 ```sh
-exec "$HOME/.dwm/dwm-session"
+startx                 # dwm
+SESSION=i3 startx      # the old i3 session
 ```
 
-at the end of `~/.xinitrc`. The session wrapper re-execs dwm on exit, so
-`$mod+Shift+r` keeps all X clients and the helper processes alive.
+Do not add a `~/.xinitrc`: that would bypass `/etc/X11/Xsession` and with it
+dbus, `xrdb` and the ssh-agent setup. The session wrapper re-execs dwm on
+exit, so `$mod+Shift+r` keeps all X clients and the helper processes alive.
 
 ## Key bindings
 
