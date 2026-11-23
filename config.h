@@ -63,6 +63,9 @@ static const Rule rules[] = {
 	{ "dwm-never-matches",     NULL,       NULL,     0,          0,           -1 },
 	/* float only the exit confirmation dialog (xmessage -name dwm-exit) */
 	{ NULL,                    "dwm-exit", NULL,     0,          1,           -1 },
+	/* fixed-size keyring/GCR prompts must float from the start */
+	{ "Gcr-prompter",          NULL,       NULL,     0,          1,           -1 },
+	{ "Gnome-keyring-prompt",  NULL,       NULL,     0,          1,           -1 },
 };
 
 /* layout(s) */

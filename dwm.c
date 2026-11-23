@@ -1683,7 +1683,7 @@ manage(Window w, XWindowAttributes *wa)
 	fwa.override_redirect = True;
 	fwa.background_pixel = scheme[SchemeNorm][ColBorder].pixel;
 	fwa.border_pixel = scheme[SchemeNorm][ColBorder].pixel;
-	fwa.event_mask = ButtonPressMask;
+	fwa.event_mask = ButtonPressMask|SubstructureRedirectMask;
 	c->frame = XCreateWindow(dpy, root, c->x, c->y,
 		c->w - 2 * c->bw, c->h - 2 * c->bw, c->bw,
 		DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
@@ -1973,6 +1973,30 @@ propertynotify(XEvent *e)
 			break;
 		case XA_WM_NORMAL_HINTS:
 			c->hintsvalid = 0;
+			updatesizehints(c);
+			/* GCR/gnome-keyring prompts advertise a fixed size after
+			 * mapping. A tiled cell is then smaller than the client and
+			 * clips the bottom buttons. Float fixed-size windows and
+			 * center them at the hinted size. */
+			if (c->isfixed) {
+				int fw = c->minw + 2 * c->bw;
+				int fh = c->minh + 2 * c->bw + titleheight;
+				int fx = c->mon->wx + (c->mon->ww - fw) / 2;
+				int fy = c->mon->wy + (c->mon->wh - fh) / 2;
+
+				if (fw > c->mon->ww)
+					fw = c->mon->ww;
+				if (fh > c->mon->wh)
+					fh = c->mon->wh;
+				if (!c->isfloating) {
+					c->isfloating = 1;
+					resize(c, fx, fy, fw, fh, 0);
+					arrange(c->mon);
+				} else if (c->w != fw || c->h != fh) {
+					resize(c, fx, fy, fw, fh, 0);
+					arrange(c->mon);
+				}
+			}
 			break;
 		case XA_WM_HINTS:
 			updatewmhints(c);

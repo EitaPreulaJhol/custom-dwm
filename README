@@ -13,6 +13,12 @@ the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
   Button2 toggles floating; Button3 resizes. Plain right-drag on the 5px
   frame border resizes from that corner (or from that edge in the middle);
   `Mod`+right-drag inside the window uses the nearest corner.
+- **Fixed-size prompts** — windows that advertise `min == max` size hints
+  after mapping (GCR / gnome-keyring) are floated and centered at their hinted
+  size. Each frame redirects its client's ConfigureRequests, so a client can
+  no longer resize itself outside the frame and clip the bottom buttons.
+  `Gcr-prompter` and `Gnome-keyring-prompt` also have an explicit floating
+  rule.
 - **Bar** — 20px, `#DEDEDE`/`#333333`, ten tags with the 1px orange frame on
   the selected one, occupied dot, `|` separator, clock and a 16px systray.
 - **Taskbar** — the current workspace's windows inside the bar, each with a
@@ -143,7 +149,9 @@ terminals, for size-hint gaps), `SHOW_TRAY=1` (three fake XEmbed icons),
 `TEST_FLOAT=1`, `TEST_TILEDRAG=1`, `TEST_RESIZE=1`,
 `TEST_BORDERRESIZE=1`, `TEST_CORNER=TL|TR|BL|BR`, `TEST_FULLSCREEN=1`,
 `TEST_TAGSWITCH=1`, `TEST_LAUNCHER=1`. `test/session.sh` covers autostart,
-restart and the floating exit dialog.
+restart and the floating exit dialog. `test/fixed.sh` (with
+`FIXED_CLASS=Gcr-prompter` or `Test-fixed`) checks fixed-size prompts: the
+client must end at `939x111` inside a centered `949x141` frame.
 
 Against `based_on/base_looks.png` (same date string, no client windows) the
 tag strip, separator, clock position and tray geometry are pixel-identical;
