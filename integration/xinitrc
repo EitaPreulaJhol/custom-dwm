@@ -1,0 +1,4 @@
+#!/bin/sh
+# ~/.xinitrc example for the dwm i3-look session.
+# Keep this as the last line of ~/.xinitrc.
+exec "$HOME/.dwm/dwm-session"

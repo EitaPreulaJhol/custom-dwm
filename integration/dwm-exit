@@ -1,0 +1,7 @@
+#!/bin/sh
+# $mod+Shift+e: exit dwm after a confirmation dialog (i3-nagbar replacement).
+if xmessage -name dwm-exit -center -buttons 'Yes:0,No:1' -default No \
+	'You pressed the exit shortcut. Do you really want to exit dwm? This will end your X session.'; then
+	touch "$HOME/.dwm/exit"
+	pkill -TERM -x dwm
+fi

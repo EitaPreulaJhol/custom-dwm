@@ -1,0 +1,5 @@
+#!/bin/sh
+# $mod+Shift+r / $mod+Shift+c: restart dwm in place.
+# dwm-session runs dwm in a loop, so the X clients and the autostart helpers
+# stay alive.
+pkill -TERM -x dwm

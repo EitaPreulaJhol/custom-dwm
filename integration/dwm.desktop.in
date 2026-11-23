@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=dwm
+Comment=dwm with the i3 look (managed session)
+Exec=/bin/sh -c "exec @SESSION@"
+TryExec=@SESSION@
+Icon=utilities-terminal
+Terminal=false
+Categories=Desktop;

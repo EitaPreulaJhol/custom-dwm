@@ -1194,7 +1194,7 @@ drawbar(Monitor *m)
 	 * overdraw it, exactly like stock dwm. */
 	if (m == selmon) {
 		tw = textwidth(stext);
-		x = barw - tw - 8;
+		x = barw - tw - 4;
 		if (x < 0)
 			x = 0;
 		drw_setscheme(drw, scheme[SchemeNorm]);
@@ -1205,7 +1205,7 @@ drawbar(Monitor *m)
 	x = 0;
 	for (i = 0; i < LENGTH(tags); i++) {
 		m->tagx[i] = x;
-		x = drawtag(m, i, x, occ, urg);
+		x += drawtag(m, i, x, occ, urg);
 	}
 	m->tagx[LENGTH(tags)] = x;
 
@@ -2466,7 +2466,7 @@ place(Client *c, int x, int y, int w, int h)
 		w = 2 * bw + 1;
 	if (h < 2 * bw + 1)
 		h = 2 * bw + 1;
-	resize(c, x + bw, y + bw, w - 2 * bw, h - 2 * bw, 0);
+	resize(c, x, y, w - 2 * bw, h - 2 * bw, 0);
 }
 
 /* splith: master column left, stack right. gaps inner 10px, outer 0. */
@@ -2900,24 +2900,19 @@ updatestatus(void)
 void
 updatesystrayicongeom(Client *i, int w, int h)
 {
-	if (i) {
-		i->h = bh;
-		if (w == h)
-			i->w = bh;
-		else if (h == bh)
-			i->w = w;
-		else
-			i->w = (int) ((float)bh * ((float)w / (float)h));
-		applysizehints(i, &(i->x), &(i->y), &(i->w), &(i->h), False);
-		/* force icons into the systray dimensions if they don't want to */
-		if (i->h > bh) {
-			if (i->w == i->h)
-				i->w = bh;
-			else
-				i->w = (int) ((float)bh * ((float)i->w / (float)i->h));
-			i->h = bh;
-		}
-	}
+	if (!i)
+		return;
+	/* polybar's tray-maxsize is 16px; dwm's applysizehints() would force
+	 * the icon up to bh (20px), so scale it here without that floor. */
+	i->h = systrayicon;
+	if (w == h)
+		i->w = systrayicon;
+	else if (h > 0)
+		i->w = (int)((float)systrayicon * ((float)w / (float)h));
+	else
+		i->w = systrayicon;
+	if (i->w < 1)
+		i->w = 1;
 }
 
 void
@@ -2995,7 +2990,8 @@ updatesystray(void)
 		XMapRaised(dpy, i->win);
 		w += systrayspacing;
 		i->x = w;
-		XMoveResizeWindow(dpy, i->win, i->x, 0, i->w, i->h);
+		XMoveResizeWindow(dpy, i->win, i->x,
+			i->h < bh ? (bh - i->h) / 2 : 0, i->w, i->h);
 		w += i->w;
 		if (i->mon != m)
 			i->mon = m;

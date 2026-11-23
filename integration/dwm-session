@@ -1,0 +1,21 @@
+#!/bin/sh
+# dwm session: starts the once-per-session helpers and restarts dwm in place.
+# Install as ~/.dwm/dwm-session (see integration/install.sh).
+set -u
+
+mkdir -p "$HOME/.dwm"
+rm -f "$HOME/.dwm/exit"
+
+# Autostart only once per X session; i3-focus-outline, nm-applet and the
+# clock keep running when dwm re-execs.
+"$HOME/.dwm/autostart.sh" >/dev/null 2>&1 &
+
+while :; do
+	${DWM:-dwm}
+	if [ -f "$HOME/.dwm/exit" ]; then
+		rm -f "$HOME/.dwm/exit"
+		break
+	fi
+	# Avoid a hot loop if dwm cannot start at all.
+	sleep 0.2
+done

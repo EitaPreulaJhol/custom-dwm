@@ -1,48 +1,130 @@
-dwm - dynamic window manager
-============================
-dwm is an extremely fast, small, and dynamic window manager for X.
+# dwm — i3 look and controls
 
+dwm 6.8 deployed with the look and key bindings of the reference i3 session
+(`based_on/i3_base_config`, `based_on/base_looks.png`). The original plan and
+the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
 
-Requirements
-------------
-In order to build dwm you need the Xlib header files.
+## What is here
 
+- **Bar** — 20px, `#DEDEDE`/`#333333`, ten tags with the 1px orange frame on
+  the selected one, occupied dot, `|` separator, clock and a 16px systray.
+- **Taskbar** — the current workspace's windows inside the bar, each with a
+  Nerd Font icon, title, and a 1px orange border on the focused one.
+- **Layouts** — `tile` (splith), `tilev` (splitv), two monocle variants for
+  stacking/tabbed, floating, with 10px inner gaps and 0 outer gaps.
+- **Controls** — every binding from `based_on/i3_base_config`, including
+  `resize`/`move` modes, `back_and_forth`, directional focus/move, and the
+  floating maximum size.
+- **Focus outline** — `../i3-focus-outline-rs` was ported from i3 IPC to
+  `_NET_ACTIVE_WINDOW`/X11, so it works under dwm (and still under i3).
+- **Session** — `integration/` has the once-per-session autostart, the clock,
+  in-place restart, the exit confirmation and the `.desktop`/`.xinitrc` files.
 
-Installation
-------------
-Edit config.mk to match your local setup (dwm is installed into
-the /usr/local namespace by default).
+Not implemented yet: per-window i3-style title bars with the application icon
+(`border normal` + `title_window_icon`). Windows get the 5px border and the
+external orange outline; the title lives in the bar's taskbar entry.
 
-Afterwards enter the following command to build and install dwm (if
-necessary as root):
+## Build
 
-    make clean install
+```sh
+make
+```
 
+Dependencies: `libx11-dev`, `libxft-dev`, `libxinerama-dev`,
+`libfontconfig1-dev`. The bar uses `Sans:pixelsize=12` and the Nerd Font
+symbols (`Symbols Nerd Font Mono`) for the taskbar icons.
 
-Running dwm
------------
-Add the following line to your .xinitrc to start dwm using startx:
+## Install
 
-    exec dwm
+```sh
+sudo make clean install          # /usr/local/bin/dwm
+```
 
-In order to connect dwm to a specific display, make sure that
-the DISPLAY environment variable is set correctly, e.g.:
+Focus outline:
 
-    DISPLAY=foo.bar:1 exec dwm
+```sh
+(cd ../i3-focus-outline-rs && make install)
+```
 
-(This will start dwm on display :1 of the host foo.bar.)
+Session helpers (per user):
 
-In order to display status info in the bar, you can do something
-like this in your .xinitrc:
+```sh
+./integration/install.sh
+```
 
-    while xsetroot -name "`date` `uptime | sed 's/.*,//'`"
-    do
-    	sleep 1
-    done &
-    exec dwm
+Then log in through the `dwm` session entry, or put
 
+```sh
+exec "$HOME/.dwm/dwm-session"
+```
 
-Configuration
--------------
-The configuration of dwm is done by creating a custom config.h
-and (re)compiling the source code.
+at the end of `~/.xinitrc`. The session wrapper re-execs dwm on exit, so
+`$mod+Shift+r` keeps all X clients and the helper processes alive.
+
+## Key bindings
+
+`MODKEY = Mod4` (Super).
+
+| Binding | Action |
+|---|---|
+| `Mod+Return` | `st` |
+| `Mod+f` | `pcmanfm` |
+| `Mod+Shift+s` | `flameshot gui` |
+| `Mod+d` | `i3-launcher` |
+| `Mod+q` | close the focused window |
+| `Mod+arrows` | directional focus |
+| `Mod+Shift+arrows` | move the window (tiled: reorder; floating: 10px) |
+| `Mod+h` / `Mod+v` | splith / splitv layout |
+| `Mod+Shift+f` | fullscreen |
+| `Mod+s` / `Mod+w` / `Mod+e` | stacking / tabbed / toggle split |
+| `Mod+space` | toggle floating |
+| `Mod+Shift+space` | focus the other of tiling/floating |
+| `Mod+1..0`, `Mod+Shift+1..0` | view / move to tags 1–10 |
+| `Mod+Tab` | previous tag |
+| `Mod+r` / `Mod+m` | resize / move binding modes |
+| `Mod+Shift+c`, `Mod+Shift+r` | restart dwm in place |
+| `Mod+Shift+e` | exit with a confirmation dialog |
+| `Mod+b` | toggle the bar (dwm extension) |
+| `Mod+j`/`Mod+k`, `Mod+Return` | focus stack / zoom (dwm extensions) |
+
+In `resize` mode use `j/k/l/;` or the arrows, `Return`/`Escape`/`Mod+r` to
+leave. In `move` mode use the arrows (Shift moves floating windows by 50px),
+`Return`/`Escape`/`Mod+m` to leave.
+
+Bar clicks: tags switch, `Mod`+tag moves the window, taskbar entries focus the
+window, the clock area runs `dwm-clock`.
+
+## Tests
+
+The Docker image builds dwm against Debian's X11/Freetype development
+packages and runs it in Xvfb:
+
+```sh
+docker build -t dwm-test:local -f test/Dockerfile test/
+
+# bar screenshot (add SHOW_TRAY=1 / SHOW_CLIENTS=1)
+docker run --rm -e SHOW_TRAY=1 -v "$PWD":/src -v /tmp/dwm-out:/out \
+    -v "$HOME/.local/share/fonts:/fonts:ro" -w /src dwm-test:local \
+    sh /src/test/run.sh
+
+# full session: autostart, restart, floating exit dialog
+docker run --rm -v "$PWD":/src -v /tmp/dwm-out:/out \
+    -v "$HOME/.local/share/fonts:/fonts:ro" \
+    -v "$PWD/../i3-focus-outline-rs/target/release/i3-focus-outline:/usr/local/bin/i3-focus-outline:ro" \
+    -w /src dwm-test:local sh /src/test/session.sh
+```
+
+Against `based_on/base_looks.png` (same date string, no client windows) the
+tag strip, separator, clock position and tray geometry are pixel-identical;
+the remaining differences are Xft-vs-Pango glyph antialiasing and the tray
+icon contents.
+
+## Files
+
+| Path | Purpose |
+|---|---|
+| `config.h` | the deployed configuration (tracked) |
+| `patches/` | upstream patches applied verbatim (`systray`) |
+| `integration/` | session wrapper, autostart, clock, restart/exit |
+| `test/` | Docker/Xvfb harness and helpers |
+| `docs/PLANS.md` | plan, status and fidelity decisions |
