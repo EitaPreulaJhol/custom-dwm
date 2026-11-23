@@ -869,6 +869,9 @@ truncatechars(const char *src, char *dst, size_t dstsz, int maxchars)
 
 	if (!dstsz)
 		return;
+	/* maxchars counts the ellipsis too, like polybar's truncate(). */
+	if (maxchars > 0)
+		maxchars--;
 	while (src[i] && n < maxchars) {
 		size_t l = utf8charlen((const unsigned char *)src + i);
 		if (i + l > dstsz - 1)
@@ -2384,6 +2387,10 @@ seturgent(Client *c, int urg)
 	XWMHints *wmh;
 
 	c->isurgent = urg;
+	/* i3's client.urgent border, but keep the focused border on the selection. */
+	if (!c->mon || c->mon->sel != c)
+		XSetWindowBorder(dpy, c->win,
+			scheme[urg ? SchemeUrg : SchemeNorm][ColBorder].pixel);
 	if (!(wmh = XGetWMHints(dpy, c->win)))
 		return;
 	wmh->flags = urg ? (wmh->flags | XUrgencyHint) : (wmh->flags & ~XUrgencyHint);

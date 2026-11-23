@@ -35,7 +35,7 @@ Installed:
 
 Next steps:
   1. Install the WM binary:  make install-local  (or: sudo make clean install)
-  2. Install the focus outline:        (cd ../i3-focus-outline-rs && make install)
+  2. Install the focus outline:        (cd ../../Projects/i3-focus-outline-rs && make install)
   3. Log in with the "dwm" session, or put this in ~/.xinitrc:
          exec "\$HOME/.dwm/dwm-session"
 

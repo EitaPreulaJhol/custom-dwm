@@ -15,7 +15,7 @@ the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
 - **Controls** — every binding from `based_on/i3_base_config`, including
   `resize`/`move` modes, `back_and_forth`, directional focus/move, and the
   floating maximum size.
-- **Focus outline** — `../i3-focus-outline-rs` was ported from i3 IPC to
+- **Focus outline** — `../../Projects/i3-focus-outline-rs` was ported from i3 IPC to
   `_NET_ACTIVE_WINDOW`/X11, so it works under dwm (and still under i3).
 - **Session** — `integration/` has the once-per-session autostart, the clock,
   in-place restart, the exit confirmation and the `.desktop`/`.xinitrc` files.
@@ -45,7 +45,7 @@ make install-local               # ~/.local/bin/dwm
 Focus outline:
 
 ```sh
-(cd ../i3-focus-outline-rs && make install)
+(cd ../../Projects/i3-focus-outline-rs && make install)
 ```
 
 Session helpers (per user):
@@ -94,7 +94,7 @@ leave. In `move` mode use the arrows (Shift moves floating windows by 50px),
 `Return`/`Escape`/`Mod+m` to leave.
 
 Bar clicks: tags switch, `Mod`+tag moves the window, taskbar entries focus the
-window, the clock area runs `dwm-clock`.
+window, the clock area opens the polybar calendar popup.
 
 ## Tests
 
@@ -112,7 +112,7 @@ docker run --rm -e SHOW_TRAY=1 -v "$PWD":/src -v /tmp/dwm-out:/out \
 # full session: autostart, restart, floating exit dialog
 docker run --rm -v "$PWD":/src -v /tmp/dwm-out:/out \
     -v "$HOME/.local/share/fonts:/fonts:ro" \
-    -v "$PWD/../i3-focus-outline-rs/target/release/i3-focus-outline:/usr/local/bin/i3-focus-outline:ro" \
+    -v "$PWD/../../Projects/i3-focus-outline-rs/target/release/i3-focus-outline:/usr/local/bin/i3-focus-outline:ro" \
     -w /src dwm-test:local sh /src/test/session.sh
 ```
 

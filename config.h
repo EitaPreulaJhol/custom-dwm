@@ -141,7 +141,8 @@ static const char *shotcmd[]  = { "flameshot", "gui", NULL };
 static const char *launchercmd[] = { "i3-launcher", NULL };
 static const char *restartcmd[] = { "dwm-restart", NULL };
 static const char *exitcmd[]  = { "dwm-exit", NULL };
-static const char *clockcmd[] = { "dwm-clock", NULL };
+static const char *calendarcmd[] = { "/bin/sh", "-c",
+	"$HOME/.config/polybar/scripts/toggle-calendar.sh", NULL };
 
 static const Key keys[] = {
 	/* modifier                     key        function        argument */
@@ -221,7 +222,7 @@ static const Button buttons[] = {
 	{ ClkTagBar,            MODKEY,         Button3,        toggletag,      {0} },
 	{ ClkTaskBar,           0,              Button1,        focustask,      {0} },
 	{ ClkTaskBar,           MODKEY,         Button2,        zoom,           {0} },
-	{ ClkStatusText,        0,              Button1,        spawn,          {.v = clockcmd } },
+	{ ClkStatusText,        0,              Button1,        spawn,          {.v = calendarcmd } },
 	{ ClkClientWin,         MODKEY,         Button1,        movemouse,      {0} },
 	{ ClkClientWin,         MODKEY,         Button2,        togglefloating, {0} },
 	{ ClkClientWin,         MODKEY,         Button3,        resizemouse,    {0} },
