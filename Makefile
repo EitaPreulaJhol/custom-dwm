@@ -30,6 +30,13 @@ dist: clean
 	gzip dwm-${VERSION}.tar
 	rm -rf dwm-${VERSION}
 
+install-local: all
+	mkdir -p ${HOME}/.local/bin ${HOME}/.local/share/man/man1
+	cp -f dwm ${HOME}/.local/bin/dwm
+	chmod 755 ${HOME}/.local/bin/dwm
+	sed "s/VERSION/${VERSION}/g" < dwm.1 > ${HOME}/.local/share/man/man1/dwm.1
+	chmod 644 ${HOME}/.local/share/man/man1/dwm.1
+
 install: all
 	mkdir -p ${DESTDIR}${PREFIX}/bin
 	cp -f dwm ${DESTDIR}${PREFIX}/bin
@@ -42,4 +49,4 @@ uninstall:
 	rm -f ${DESTDIR}${PREFIX}/bin/dwm\
 		${DESTDIR}${MANPREFIX}/man1/dwm.1
 
-.PHONY: all clean dist install uninstall
+.PHONY: all clean dist install install-local uninstall

@@ -3,6 +3,11 @@
 # Install as ~/.dwm/dwm-session (see integration/install.sh).
 set -u
 
+# Display managers often start with a minimal PATH; the helpers (and dwm
+# installed with `make install-local`) live in ~/.local/bin.
+PATH="$HOME/.local/bin:$PATH"
+export PATH
+
 mkdir -p "$HOME/.dwm"
 rm -f "$HOME/.dwm/exit"
 

@@ -38,6 +38,8 @@ symbols (`Symbols Nerd Font Mono`) for the taskbar icons.
 
 ```sh
 sudo make clean install          # /usr/local/bin/dwm
+# or, without root:
+make install-local               # ~/.local/bin/dwm
 ```
 
 Focus outline:
