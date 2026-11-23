@@ -16,7 +16,7 @@ rm -f "$HOME/.dwm/exit"
 "$HOME/.dwm/autostart.sh" >/dev/null 2>&1 &
 
 while :; do
-	${DWM:-dwm}
+	"${DWM:-dwm}"
 	if [ -f "$HOME/.dwm/exit" ]; then
 		rm -f "$HOME/.dwm/exit"
 		break
