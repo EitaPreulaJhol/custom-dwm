@@ -244,6 +244,7 @@ static void movemouse(const Arg *arg);
 static Client *nexttiled(Client *c);
 static void place(Client *c, int x, int y, int w, int h);
 static void pop(Client *c);
+static void grabmodekeys(int grab);
 static void propertynotify(XEvent *e);
 static void quit(const Arg *arg);
 static Monitor *recttomon(int x, int y, int w, int h);
@@ -2814,8 +2815,50 @@ setmfact(const Arg *arg)
 void
 setmode(const Arg *arg)
 {
-	wmmode = (wmmode == arg->i) ? ModeNormal : arg->i;
+	int newmode = (wmmode == arg->i) ? ModeNormal : arg->i;
+
+	if (wmmode == ModeNormal && newmode != ModeNormal)
+		grabmodekeys(1);
+	else if (wmmode != ModeNormal && newmode == ModeNormal)
+		grabmodekeys(0);
+	wmmode = newmode;
 	drawbars();
+}
+
+/* While a mode is active, bare arrows/Return/Escape are passive grabs on the
+ * root; otherwise the focused client receives them and the mode never sees
+ * them.  Shift is grabbed for the 50px move step, and the lock bits keep the
+ * grabs working with CapsLock/NumLock. */
+static void
+grabmodekeys(int grab)
+{
+	static const KeySym syms[] = {
+		XK_Left, XK_Right, XK_Up, XK_Down,
+		XK_j, XK_k, XK_l, XK_semicolon,
+		XK_Escape, XK_Return
+	};
+	unsigned int mods[] = {
+		0, ShiftMask, LockMask, numlockmask,
+		LockMask | numlockmask,
+		ShiftMask | LockMask,
+		ShiftMask | numlockmask,
+		ShiftMask | LockMask | numlockmask
+	};
+	unsigned int i, j;
+	KeyCode code;
+
+	for (i = 0; i < LENGTH(syms); i++) {
+		if (!(code = XKeysymToKeycode(dpy, syms[i])))
+			continue;
+		for (j = 0; j < LENGTH(mods); j++) {
+			if (grab)
+				XGrabKey(dpy, code, mods[j], root, True,
+					GrabModeAsync, GrabModeAsync);
+			else
+				XUngrabKey(dpy, code, mods[j], root);
+		}
+	}
+	XSync(dpy, False);
 }
 
 int
@@ -2830,6 +2873,7 @@ modekey(XEvent *e, KeySym keysym)
 	|| (keysym == XK_r && CLEANMASK(e->xkey.state) == MODKEY)
 	|| (keysym == XK_m && CLEANMASK(e->xkey.state) == MODKEY)) {
 		wmmode = ModeNormal;
+		grabmodekeys(0);
 		drawbars();
 		return 1;
 	}

@@ -135,7 +135,9 @@ exit, so `$mod+Shift+r` keeps all X clients and the helper processes alive.
 
 In `resize` mode use `j/k/l/;` or the arrows, `Return`/`Escape`/`Mod+r` to
 leave. In `move` mode use the arrows (Shift moves floating windows by 50px),
-`Return`/`Escape`/`Mod+m` to leave.
+`Return`/`Escape`/`Mod+m` to leave. While a mode is active its keys are
+grabbed on the root, so the focused client does not swallow the bare arrows,
+`Return` or `Escape`.
 
 Bar clicks: tags switch, `Mod`+tag moves the window, taskbar entries focus the
 window, the clock area opens the polybar calendar popup.
@@ -169,6 +171,8 @@ restart and the floating exit dialog. `TEST_TABS` also checks `Mod+Right`/`Left`
 tab switching and that active/focus stay identical. `test/icons.sh` checks
 real 16/32/64px `_NET_WM_ICON` icons (transparent corners), the blank fallback,
 live property update/delete, and icons in the title bar, taskbar and tab strip.
+`test/modes.sh` checks floating resize/move, tiled `mfact`/cell move, and that
+normal `Mod+arrow` focus works after leaving the mode.
 `test/fixed.sh` (with
 `FIXED_CLASS=Gcr-prompter` or `Test-fixed`) checks fixed-size prompts: the
 client must end at `939x111` inside a centered `949x141` frame.
