@@ -4,23 +4,22 @@ dwm 6.8 with the look and key bindings of my default i3 session.
 
 ## Features
 
-- **Frames and title bars** — 20px title bar with a real 16px
+- **Frames and title bars** - 20px title bar with a real 16px
   `_NET_WM_ICON` (blank if absent), i3's 5px border and colors. Drag the title
-  to move, Button2 toggles floating, Button3 resizes; plain right-drag on the
-  border resizes from that corner or edge.
-- **Tabbed mode** — the title bar becomes a shared, clickable tab strip;
+  to move, Win+Space toggles floating, Button3 resizes (on borders).
+- **Tabbed mode** - the title bar becomes a shared, clickable tab strip;
   `Mod+Left/Right` cycles tabs. Only the active tab is mapped, and remaps
   repaint the client so old content cannot linger.
-- **Bar and taskbar** — 10 tags with the orange active frame, occupied dot,
+- **Bar and taskbar** - 10 tags with the orange active frame, occupied dot,
   clock, 16px tray; taskbar items show real icons, titles, and an orange frame
   on the focused window.
-- **Layouts and gaps** — splith, splitv, monocle, tabbed, and floating, with
+- **Layouts and gaps** - splith, splitv, monocle, tabbed, and floating, with
   uniform 10px inner and outer gaps.
-- **Prompts** — fixed-size GCR/keyring dialogs are floated and centered at
+- **Prompts** - fixed-size GCR/keyring dialogs are floated and centered at
   their hinted size so their buttons are not clipped.
-- **Focus outline** — the `i3-focus-outline` helper was ported to EWMH/X11;
+- **Focus outline** - the `i3-focus-outline` helper was ported to EWMH/X11;
   it follows the real X focus and keeps the i3 tab notch (`_DWM_TAB`).
-- **Session** — `integration/` has autostart, the clock, in-place restart, the
+- **Session** - `integration/` has autostart, the clock, in-place restart, the
   exit confirmation, and the xsession selector.
 
 Known gaps: no nested i3 tree (splith/splitv are separate layouts); a process

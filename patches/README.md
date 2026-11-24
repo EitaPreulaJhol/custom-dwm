@@ -1,6 +1,6 @@
 # Patches
 
-- `01-systray-6.8.diff` — upstream `dwm-systray-6.8.diff`, applied verbatim
+- `01-systray-6.8.diff` - upstream `dwm-systray-6.8.diff`, applied verbatim
   (only the icon sizing was adjusted afterwards in `dwm.c` so the tray matches
   the 16px polybar reference).
 
