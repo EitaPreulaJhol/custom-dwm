@@ -1,8 +1,8 @@
 # dwm — i3 look and controls
 
 dwm 6.8 deployed with the look and key bindings of the reference i3 session
-(the reference i3 config and screenshot). The original plan and
-the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
+(the reference i3 config and screenshot). The original plan and fidelity notes
+are kept locally and are not tracked.
 
 ## What is here
 
@@ -190,4 +190,3 @@ icon contents.
 | `patches/` | upstream patches applied verbatim (`systray`) |
 | `integration/` | session wrapper, autostart, clock, restart/exit |
 | `test/` | Docker/Xvfb harness and helpers |
-| `docs/PLANS.md` | plan, status and fidelity decisions |
