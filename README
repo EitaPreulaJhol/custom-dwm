@@ -1,104 +1,62 @@
 # dwm — i3 look and controls
 
-dwm 6.8 deployed with the look and key bindings of the reference i3 session
-(the reference i3 config and screenshot). The original plan and fidelity notes
-are kept locally and are not tracked.
+dwm 6.8 with the look and key bindings of the reference i3 session. The
+original plan and fidelity notes are kept locally and are not tracked.
 
-## What is here
+## Features
 
-- **Title bars** — every client is reparented into an override-redirect frame
-  with a 20px title bar: a 16px real app-icon slot followed by the left-aligned
-  title (`_NET_WM_ICON`; the slot stays blank when the client has none), the
-  i3 5px border and the focused/unfocused/urgent colors. Dragging the title
-  bar moves a floating window; `Mod`+dragging a tiled title floats it and follows the pointer;
-  Button2 toggles floating; Button3 resizes. Plain right-drag on the 5px
-  frame border resizes from that corner (or from that edge in the middle);
-  `Mod`+right-drag inside the window uses the nearest corner.
-  In **tabbed** mode the same title bar is a shared tab strip: one equal cell
-  per tiled client, the focused tab with the light background, 1px separators,
-  and a click on a tab focuses that client. `Mod+Left/Right` also cycles the
-tabs (wrapping), like `focus left/right` inside an i3 tabbed container. Only
-the active tab's content is mapped; the tab strip is part of the frame.
-  When a frame is mapped again (tab or tag switch) its client is cleared and
-exposed, so the previous tab's image cannot linger.
-- **Fixed-size prompts** — windows that advertise `min == max` size hints
-  after mapping (GCR / gnome-keyring) are floated and centered at their hinted
-  size. Each frame redirects its client's ConfigureRequests, so a client can
-  no longer resize itself outside the frame and clip the bottom buttons.
-  `Gcr-prompter` and `Gnome-keyring-prompt` also have an explicit floating
-  rule.
-- **Bar** — 20px, `#DEDEDE`/`#333333`, ten tags with the 1px orange frame on
-  the selected one, occupied dot, `|` separator, clock and a 16px systray.
-- **Taskbar** — the current workspace's windows inside the bar, each with the
-  real 16px `_NET_WM_ICON` (blank slot when absent), title, and a 1px orange
-  border on the focused one.
-- **Layouts** — `tile` (splith), `tilev` (splitv), `monocle` for stacking,
-  and a real **tabbed** layout, plus floating, with 10px inner gaps and a 10px
-  gap on all four monitor edges (a maximized window keeps the same frame on
-  every side). The frames make the gaps exact even for terminals with size
-  hints.
-- **Controls** — every binding from the reference i3 config, including
-  `resize`/`move` modes, `back_and_forth`, directional focus/move, and the
-  floating maximum size. Floating moves do not snap or re-apply size hints.
-- **Focus outline** — `../../Projects/i3-focus-outline-rs` was ported from i3 IPC to
-  `_NET_ACTIVE_WINDOW`/X11, so it works under dwm (and still under i3). It
-  surrounds the whole frame, title bar included, and prefers the real X input
-  focus over a stale `_NET_ACTIVE_WINDOW` property, so the orange frame matches
-  the window that actually receives the keys. In dwm's tabbed layout the
-  active tab rectangle is published as `_DWM_TAB`; the helper restores the old
-  i3 tab notch: the top edge is high over the focused tab, lowered over the
-  inactive tabs, with the vertical separators between them.
-- **Session** — `integration/` has the once-per-session autostart, the clock,
-  in-place restart, the exit confirmation and the `.desktop`/`.xinitrc` files.
+- **Frames and title bars** — 20px title bar with a real 16px
+  `_NET_WM_ICON` (blank if absent), i3's 5px border and colors. Drag the title
+  to move, Button2 toggles floating, Button3 resizes; plain right-drag on the
+  border resizes from that corner or edge.
+- **Tabbed mode** — the title bar becomes a shared, clickable tab strip;
+  `Mod+Left/Right` cycles tabs. Only the active tab is mapped, and remaps
+  repaint the client so old content cannot linger.
+- **Bar and taskbar** — 10 tags with the orange active frame, occupied dot,
+  clock, 16px tray; taskbar items show real icons, titles, and an orange frame
+  on the focused window.
+- **Layouts and gaps** — splith, splitv, monocle, tabbed, and floating, with
+  uniform 10px inner and outer gaps.
+- **Prompts** — fixed-size GCR/keyring dialogs are floated and centered at
+  their hinted size so their buttons are not clipped.
+- **Focus outline** — the `i3-focus-outline` helper was ported to EWMH/X11;
+  it follows the real X focus and keeps the i3 tab notch (`_DWM_TAB`).
+- **Session** — `integration/` has autostart, the clock, in-place restart, the
+  exit confirmation, and the xsession selector.
 
-Known gaps: h/v split is approximated by the two tile layouts (no i3 tree);
-the EWMH-only outline path under i3 still has no tree-based tab notch (dwm
-publishes `_DWM_TAB`, i3 does not); and a process restart (dwm has no
-in-process restart) assigns hidden clients to the current tag. Icons come only
-from `_NET_WM_ICON`; there is no XDG icon-theme lookup, so a client without
-that property gets a blank 16px slot.
+Known gaps: no nested i3 tree (splith/splitv are separate layouts); a process
+restart assigns hidden clients to the current tag; icons come only from
+`_NET_WM_ICON` and there is no theme lookup (missing icons leave a blank slot).
 
-## Build
+## Build and install
 
 ```sh
 make
 ```
 
 Dependencies: `libx11-dev`, `libxft-dev`, `libxinerama-dev`,
-`libfontconfig1-dev`. The bar uses `Sans:pixelsize=12`; `Symbols Nerd Font
-Mono` remains in the font fallback list for any Nerd glyphs in window titles.
-
-## Install
+`libfontconfig1-dev`.
 
 ```sh
 sudo make clean install          # /usr/local/bin/dwm
-# or, without root:
+# or
 make install-local               # ~/.local/bin/dwm
-```
 
-Focus outline:
-
-```sh
 (cd ../../Projects/i3-focus-outline-rs && make install)
-```
-
-Session helpers (per user):
-
-```sh
 ./integration/install.sh
 ```
 
-With a display manager, log in through the `dwm` session entry. Without one,
-`startx` reads `~/.xsession` (installed by `integration/install.sh`):
+With a display manager, choose the `dwm` session. Without one, `startx` uses
+the installed `~/.xsession`:
 
 ```sh
 startx                 # dwm
 SESSION=i3 startx      # the old i3 session
 ```
 
-Do not add a `~/.xinitrc`: that would bypass `/etc/X11/Xsession` and with it
-dbus, `xrdb` and the ssh-agent setup. The session wrapper re-execs dwm on
-exit, so `$mod+Shift+r` keeps all X clients and the helper processes alive.
+Do not add `~/.xinitrc`: it bypasses `/etc/X11/Xsession` (dbus, `xrdb`,
+ssh-agent). The session wrapper re-execs dwm on exit, so `Mod+Shift+r` keeps
+clients and helpers alive.
 
 ## Key bindings
 
@@ -106,87 +64,57 @@ exit, so `$mod+Shift+r` keeps all X clients and the helper processes alive.
 
 | Binding | Action |
 |---|---|
-| `Mod+Return` | `st` |
-| `Mod+f` | `pcmanfm` |
-| `Mod+Shift+s` | `flameshot gui` |
-| `Mod+d` | `i3-launcher` |
+| `Mod+Return` | start `st` |
+| `Mod+f` / `Mod+d` | pcmanfm / launcher |
+| `Mod+Shift+s` | flameshot |
 | `Mod+q` | close the focused window |
-| `Mod+arrows` | directional focus; in tabbed/stacking, Left/Right cycles windows/tabs |
+| `Mod+arrows` | directional focus; Left/Right cycles tabs in tabbed/stacking |
 | `Mod+Shift+arrows` | move the window (tiled: reorder; floating: 10px) |
-| `Mod+h` / `Mod+v` | splith / splitv layout |
-| `Mod+Shift+f` | fullscreen |
+| `Mod+h` / `Mod+v` | splith / splitv |
 | `Mod+s` / `Mod+w` / `Mod+e` | stacking / tabbed / toggle split |
-| click a tab in tabbed mode | focus that client |
-| `Mod+space` | toggle floating |
-| `Mod+Shift+space` | focus the other of tiling/floating |
-| `Mod+1..0`, `Mod+Shift+1..0` | view / move to tags 1–10 |
+| `Mod+space` / `Mod+Shift+space` | toggle floating / focus the other |
+| `Mod+Shift+f` | fullscreen |
+| `Mod+1..0` / `Mod+Shift+1..0` | view / move to tags 1–10 |
 | `Mod+Tab` | previous tag |
-| `Mod+r` / `Mod+m` | resize / move binding modes |
-| `Mod+Shift+c`, `Mod+Shift+r` | restart dwm in place (hidden tags reset) |
-| `Mod+Shift+e` | exit with a confirmation dialog |
-| title bar `Button1` | focus; drag a floating window |
+| `Mod+r` / `Mod+m` | resize / move mode |
+| `Mod+Shift+c` / `Mod+Shift+r` | restart dwm in place (hidden tags reset) |
+| `Mod+Shift+e` | exit with confirmation |
+| `Mod+b` / `Mod+j` / `Mod+k` | bar / focus stack |
+| click a tab | focus that client |
+| title `Button1` | focus; drag a floating window |
 | `Mod`+title `Button1` | drag a tiled window (floats it) or move a floating one |
-| title bar `Button2` | toggle floating |
-| title bar `Button3` | resize |
-| frame border `Button3` | resize from that corner/edge (plain right-drag) |
-| `Mod`+border `Button1` / `Button3` | move / resize |
-| `Mod+b` | toggle the bar (dwm extension) |
-| `Mod+j`/`Mod+k`, `Mod+Return` | focus stack / zoom (dwm extensions) |
+| title `Button2` | toggle floating |
+| title `Button3` | resize |
+| border `Button3` / `Mod`+border `Button1/3` | resize / move or resize |
 
-In `resize` mode use `j/k/l/;` or the arrows, `Return`/`Escape`/`Mod+r` to
-leave. In `move` mode use the arrows (Shift moves floating windows by 50px),
-`Return`/`Escape`/`Mod+m` to leave. While a mode is active its keys are
-grabbed on the root, so the focused client does not swallow the bare arrows,
-`Return` or `Escape`.
+In resize mode use the arrows or `j/k/l/;`; in move mode use the arrows
+(Shift = 50px for floating). `Return`, `Escape`, `Mod+r` or `Mod+m` leaves.
+The mode keys are grabbed, so the focused client does not swallow them.
 
 Bar clicks: tags switch, `Mod`+tag moves the window, taskbar entries focus the
 window, the clock area opens the polybar calendar popup.
 
 ## Tests
 
-The Docker image builds dwm against Debian's X11/Freetype development
-packages and runs it in Xvfb:
+The Docker harness runs dwm in Xvfb; it never touches the live session.
 
 ```sh
 docker build -t dwm-test:local -f test/Dockerfile test/
 
-# bar screenshot (SHOW_CLIENTS=1 or SHOW_ST=1; TEST_* are listed below)
 docker run --rm -e SHOW_TRAY=1 -v "$PWD":/src -v /tmp/dwm-out:/out \
-    -v "$HOME/.local/share/fonts:/fonts:ro" -w /src dwm-test:local \
-    sh /src/test/run.sh
-
-# full session: autostart, restart, floating exit dialog
-docker run --rm -v "$PWD":/src -v /tmp/dwm-out:/out \
-    -v "$HOME/.local/share/fonts:/fonts:ro" \
-    -v "$PWD/../../Projects/i3-focus-outline-rs/target/release/i3-focus-outline:/usr/local/bin/i3-focus-outline:ro" \
-    -w /src dwm-test:local sh /src/test/session.sh
+    -w /src dwm-test:local sh /src/test/run.sh
 ```
 
-Test modes: `SHOW_CLIENTS=1` (three xmessages), `SHOW_ST=1` (four st
-terminals, for size-hint gaps), `SHOW_TRAY=1` (three fake XEmbed icons),
-`TEST_FLOAT=1`, `TEST_TILEDRAG=1`, `TEST_RESIZE=1`,
-`TEST_BORDERRESIZE=1`, `TEST_CORNER=TL|TR|BL|BR`, `TEST_TABS=1`,
-`TEST_FULLSCREEN=1`, `TEST_TAGSWITCH=1`, `TEST_LAUNCHER=1`. `test/session.sh` covers autostart,
-restart and the floating exit dialog. `TEST_TABS` also checks `Mod+Right`/`Left`
-tab switching and that active/focus stay identical. `test/icons.sh` checks
-real 16/32/64px `_NET_WM_ICON` icons (transparent corners), the blank fallback,
-live property update/delete, and icons in the title bar, taskbar and tab strip.
-`test/modes.sh` checks floating resize/move, tiled `mfact`/cell move, and that
-normal `Mod+arrow` focus works after leaving the mode.
-`test/fixed.sh` (with
-`FIXED_CLASS=Gcr-prompter` or `Test-fixed`) checks fixed-size prompts: the
-client must end at `939x111` inside a centered `949x141` frame.
-
-Against the reference screenshot (same date string, no client windows) the
-tag strip, separator, clock position and tray geometry are pixel-identical;
-the remaining differences are Xft-vs-Pango glyph antialiasing and the tray
-icon contents.
+`test/run.sh` accepts `SHOW_CLIENTS`, `SHOW_ST`, `SHOW_TRAY` and the `TEST_*`
+flags. `test/session.sh` covers restart/exit; `test/icons.sh`,
+`test/modes.sh`, and `test/fixed.sh` cover icons, binding modes, and fixed-size
+prompts.
 
 ## Files
 
 | Path | Purpose |
 |---|---|
-| `config.h` | the deployed configuration (tracked) |
+| `config.h` | the deployed configuration |
 | `patches/` | upstream patches applied verbatim (`systray`) |
 | `integration/` | session wrapper, autostart, clock, restart/exit |
 | `test/` | Docker/Xvfb harness and helpers |
