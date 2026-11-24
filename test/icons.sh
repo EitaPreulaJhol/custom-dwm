@@ -38,7 +38,7 @@ sleep 0.5
 mkdir -p /out
 import -window root /out/icons-tile.png
 
-# A client that never publishes an icon: the 16px slot must stay blank.
+# A client that never publishes an icon: no icon slot is reserved.
 /tmp/iconwin blank IconTest '#555555' 0 >/tmp/iconwin-blank.log 2>&1 &
 BLANK_PID=$!
 sleep 0.6

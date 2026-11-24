@@ -117,7 +117,7 @@ struct Client {
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
 	int mapped; /* frame currently mapped by showhide() */
-	uint32_t *icon; /* 16x16 premultiplied ARGB, NULL = blank slot */
+	uint32_t *icon; /* 16x16 premultiplied ARGB, NULL = no icon */
 	Client *next;
 	Client *snext;
 	Monitor *mon;
@@ -1234,7 +1234,7 @@ drawtitle(Client *c, int focused)
 					drw_rect(drw, tx, 0, 1, th, 1, 0);
 				}
 				truncatechars(t->name, raw, sizeof raw, 64);
-				narrow = twi < 6 + ICONSIZE + icongap + 2 + 6;
+				narrow = !t->icon || twi < 6 + ICONSIZE + icongap + 2 + 6;
 				if (narrow) {
 					textx = tx + 6;
 					avail = twi - 12;
@@ -1280,10 +1280,10 @@ drawtitle(Client *c, int focused)
 	}
 	XDeleteProperty(dpy, c->frame, netatom[NetDwmTab]);
 
-	/* single window title: 16px icon slot (blank if none) + text */
+	/* single window title: icon (when present) + text, no empty slot */
 	truncatechars(c->name, raw, sizeof raw, 64);
 	iconx = pad;
-	textx = pad + ICONSIZE + icongap;
+	textx = pad + (c->icon ? ICONSIZE + icongap : 0);
 	avail = tw - textx - pad;
 	if (avail < 1)
 		title[0] = '\0';
@@ -1329,7 +1329,8 @@ taskwidth(Client *c, int cap)
 	else
 		snprintf(title, sizeof title, "%s", raw);
 
-	w = textwidth(" ") + ICONSIZE + icongap + textwidth(title) + textwidth(" ");
+	w = textwidth(" ") + (c->icon ? ICONSIZE + icongap : 0)
+		+ textwidth(title) + textwidth(" ");
 	if (c == c->mon->sel)
 		w += 2; /* 1px border on each side */
 	return w;
@@ -1360,10 +1361,11 @@ drawtask(Monitor *m, Client *c, int *x, int cap)
 	drw_setscheme(drw, scheme[seltask]);
 	drw_text(drw, tx, 0, textwidth(" "), bh, 0, " ", 0);
 	tx += textwidth(" ");
-	if (c->icon)
+	if (c->icon) {
 		drw_icon(drw, tx, (bh - ICONSIZE) / 2, c->icon,
 			&scheme[seltask][ColBg]);
-	tx += ICONSIZE + icongap;
+		tx += ICONSIZE + icongap;
+	}
 	drw_text(drw, tx, 0, textwidth(title), bh, 0, title, 0);
 	tx += textwidth(title);
 	drw_text(drw, tx, 0, textwidth(" "), bh, 0, " ", 0);

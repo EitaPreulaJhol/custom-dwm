@@ -5,8 +5,9 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
 ## Features
 
 - **Frames and title bars** - 20px title bar with a real 16px
-  `_NET_WM_ICON` (blank if absent), i3-style border and colors. Drag the title
-  to move, Win+Space toggles floating, Button3 resizes (on borders).
+  `_NET_WM_ICON` (no empty slot when absent), i3-style border and colors.
+  Drag the title to move, Win+Space toggles floating, Button3 resizes (on
+  borders).
 - **Tabbed mode** - the title bar becomes a shared, clickable tab strip;
   `Mod+Left/Right` cycles tabs. Only the active tab is mapped, and remaps
   repaint the client so old content cannot linger.
@@ -26,7 +27,8 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
 
 Known gaps: no nested i3 tree (splith/splitv are separate layouts); a process
 restart assigns hidden clients to the current tag; icons come only from
-`_NET_WM_ICON` and there is no theme lookup (missing icons leave a blank slot).
+`_NET_WM_ICON` and there is no theme lookup (clients without an icon get no
+icon slot).
 
 ## Build and install
 
