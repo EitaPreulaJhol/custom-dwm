@@ -16,6 +16,10 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
   on the focused window.
 - **Layouts and gaps** - splith, splitv, monocle, tabbed, and floating, with
   uniform 10px inner and outer gaps.
+- **Floating windows** - any window that does not tile (floating rules,
+  dialogs, transients, fixed-size prompts, the floating layout) always opens
+  centered on its monitor, whatever position the client asked for. Clients
+  adopted on a WM restart keep their position.
 - **Prompts** - fixed-size GCR/keyring dialogs are floated and centered at
   their hinted size so their buttons are not clipped.
 - **Focus outline** - a 2px orange outline around the focused frame, drawn by

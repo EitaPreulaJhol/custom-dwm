@@ -196,6 +196,7 @@ static void arrangemon(Monitor *m);
 static void attach(Client *c);
 static void attachstack(Client *c);
 static void buttonpress(XEvent *e);
+static void centerclient(Client *c);
 static void checkotherwm(void);
 static void cleanup(void);
 static void cleanupmon(Monitor *mon);
@@ -237,7 +238,7 @@ static void grabkeys(void);
 static void incnmaster(const Arg *arg);
 static void keypress(XEvent *e);
 static void killclient(const Arg *arg);
-static void manage(Window w, XWindowAttributes *wa);
+static void manage(Window w, XWindowAttributes *wa, int adopt);
 static void mappingnotify(XEvent *e);
 static void maprequest(XEvent *e);
 static int modekey(XEvent *e, KeySym keysym);
@@ -1777,6 +1778,31 @@ floatnatural(Client *c)
 	resize(c, x, y, w, h, 0);
 }
 
+/* Center c on its monitor's work area. Windows that do not tile always open
+ * here, so the position the client asked for is ignored. The size comes from
+ * the size hints (a fixed-size prompt must be centered at its hinted size) and
+ * resize() may clamp it further; re-center after it ran to keep the final
+ * geometry centered. */
+void
+centerclient(Client *c)
+{
+	Monitor *m = c->mon;
+	int w = c->w, h = c->h, x = c->x, y = c->y;
+
+	if (!m)
+		return;
+	applysizehints(c, &x, &y, &w, &h, 0);
+	w = MIN(w, m->ww);
+	h = MIN(h, m->wh);
+	x = m->wx + (m->ww - w) / 2;
+	y = m->wy + (m->wh - h) / 2;
+	resize(c, x, y, w, h, 0);
+	x = m->wx + (m->ww - c->w) / 2;
+	y = m->wy + (m->wh - c->h) / 2;
+	if (x != c->x || y != c->y)
+		resize(c, x, y, c->w, c->h, 0);
+}
+
 Atom
 getatomprop(Client *c, Atom prop)
 {
@@ -1976,7 +2002,7 @@ nowms(void)
 }
 
 void
-manage(Window w, XWindowAttributes *wa)
+manage(Window w, XWindowAttributes *wa, int adopt)
 {
 	Client *c, *t = NULL;
 	Window trans = None;
@@ -2050,6 +2076,11 @@ manage(Window w, XWindowAttributes *wa)
 	updatewmhints(c);
 	if (!c->isfloating)
 		c->isfloating = c->oldstate = trans != None || c->isfixed;
+	/* A window that does not tile opens centered, whatever position it asked
+	 * for. scan() adopts already placed clients on restart: leave them. */
+	if (!adopt && !c->isfullscreen
+	&& (c->isfloating || !c->mon->lt[c->mon->sellt]->arrange))
+		centerclient(c);
 	if (c->isfloating)
 		XRaiseWindow(dpy, c->frame);
 
@@ -2100,7 +2131,7 @@ maprequest(XEvent *e)
 	if (!XGetWindowAttributes(dpy, ev->window, &wa) || wa.override_redirect)
 		return;
 	if (!wintoclient(ev->window))
-		manage(ev->window, &wa);
+		manage(ev->window, &wa, 0);
 }
 
 void
@@ -2585,21 +2616,15 @@ propertynotify(XEvent *e)
 			 * clips the bottom buttons. Float fixed-size windows and
 			 * center them at the hinted size. */
 			if (c->isfixed) {
-				int fw = c->minw + 2 * c->bw;
-				int fh = c->minh + 2 * c->bw + titleheight;
-				int fx = c->mon->wx + (c->mon->ww - fw) / 2;
-				int fy = c->mon->wy + (c->mon->wh - fh) / 2;
+				int fw = MIN(c->minw + 2 * c->bw, c->mon->ww);
+				int fh = MIN(c->minh + 2 * c->bw + titleheight, c->mon->wh);
 
-				if (fw > c->mon->ww)
-					fw = c->mon->ww;
-				if (fh > c->mon->wh)
-					fh = c->mon->wh;
 				if (!c->isfloating) {
 					c->isfloating = 1;
-					resize(c, fx, fy, fw, fh, 0);
+					centerclient(c);
 					arrange(c->mon);
 				} else if (c->w != fw || c->h != fh) {
-					resize(c, fx, fy, fw, fh, 0);
+					centerclient(c);
 					arrange(c->mon);
 				}
 			}
@@ -2945,7 +2970,7 @@ scan(void)
 			 * it so it gets a frame/title and is mapped again. */
 			if (wa.map_state == IsViewable || getstate(wins[i]) == IconicState
 			|| getstate(wins[i]) == NormalState)
-				manage(wins[i], &wa);
+				manage(wins[i], &wa, 1);
 		}
 		for (i = 0; i < num; i++) { /* now the transients */
 			if (!XGetWindowAttributes(dpy, wins[i], &wa))
@@ -2953,7 +2978,7 @@ scan(void)
 			if (XGetTransientForHint(dpy, wins[i], &d1)
 			&& (wa.map_state == IsViewable || getstate(wins[i]) == IconicState
 			|| getstate(wins[i]) == NormalState))
-				manage(wins[i], &wa);
+				manage(wins[i], &wa, 1);
 		}
 		if (wins)
 			XFree(wins);
