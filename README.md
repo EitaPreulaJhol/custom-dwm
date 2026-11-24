@@ -1,6 +1,6 @@
 # dwm - i3 light look and controls
 
-dwm 6.8 with the look and key bindings of my default i3 session.
+dwm 6.8 with the look and key bindings of my default i3 session (mostly for backup).
 
 ## Features
 
