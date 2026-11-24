@@ -1,7 +1,6 @@
-# dwm — i3 look and controls
+# dwm - i3 light look and controls
 
-dwm 6.8 with the look and key bindings of the reference i3 session. The
-original plan and fidelity notes are kept locally and are not tracked.
+dwm 6.8 with the look and key bindings of my default i3 session.
 
 ## Features
 
