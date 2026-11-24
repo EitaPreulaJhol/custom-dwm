@@ -21,6 +21,7 @@
  * To understand everything else, start reading main().
  */
 #include <errno.h>
+#include <limits.h>
 #include <locale.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -37,6 +38,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xproto.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/shape.h>
 #ifdef XINERAMA
 #include <X11/extensions/Xinerama.h>
 #endif /* XINERAMA */
@@ -242,6 +244,14 @@ static void motionnotify(XEvent *e);
 static void movedir(const Arg *arg);
 static void movemouse(const Arg *arg);
 static Client *nexttiled(Client *c);
+static int outlineadd(XRectangle *rects, int n, int max, int x, int y, int w, int h);
+static void outlinecreate(void);
+static void outlinehide(void);
+static int outlinerects(XRectangle *rects, int max, int width, int height,
+	int containerw, const XRectangle *tab, int t);
+static void outlineshape(int width, int height, int containerw, const XRectangle *tab);
+static int outlinetabrect(Client *c, XRectangle *tab);
+static void outlineupdate(void);
 static void place(Client *c, int x, int y, int w, int h);
 static void pop(Client *c);
 static void grabmodekeys(int grab);
@@ -350,6 +360,12 @@ static Display *dpy;
 static Drw *drw;
 static Monitor *mons, *selmon;
 static Window root, wmcheckwin;
+/* focus outline: shaped, input-transparent window above the focused frame */
+static Window outlinewin = None;
+static int outlinemapped;
+static int outlinex, outliney, outlinew, outlineh;
+static int outlinetabvalid;
+static XRectangle outlinetab;
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -499,6 +515,7 @@ arrange(Monitor *m)
 		restack(m);
 	} else for (m = mons; m; m = m->next)
 		arrangemon(m);
+	outlineupdate();
 }
 
 void
@@ -621,6 +638,12 @@ cleanup(void)
 		XUnmapWindow(dpy, systray->win);
 		XDestroyWindow(dpy, systray->win);
 		free(systray);
+	}
+
+	if (outlinewin) {
+		XDestroyWindow(dpy, outlinewin);
+		outlinewin = None;
+		outlinemapped = 0;
 	}
 
 	for (i = 0; i < CurLast; i++)
@@ -1553,6 +1576,7 @@ focus(Client *c)
 	drawbars();
 	if (c)
 		drawtitle(c, 1);
+	outlineupdate();
 }
 
 void
@@ -2249,6 +2273,225 @@ nexttiled(Client *c)
 	return c;
 }
 
+/* One outline edge, in overlay-local coordinates. */
+static int
+outlineadd(XRectangle *rects, int n, int max, int x, int y, int w, int h)
+{
+	if (w <= 0 || h <= 0 || n >= max)
+		return n;
+	if (x < 0 || y < 0 || x + w > SHRT_MAX || y + h > SHRT_MAX)
+		return n;
+	rects[n].x = x;
+	rects[n].y = y;
+	rects[n].width = w;
+	rects[n].height = h;
+	return n + 1;
+}
+
+/* Edges of the hollow outline relative to the overlay window. `containerw`
+ * is the frame's outer width and `tab` is the focused tab relative to the
+ * frame's outer rect (NULL for a plain frame). This is the same geometry as
+ * i3-focus-outline's outline_rects(): the top edge stays high over the
+ * focused tab and drops to the content top over the inactive tabs, with
+ * vertical steps at the tab boundaries. */
+static int
+outlinerects(XRectangle *rects, int max, int width, int height,
+	int containerw, const XRectangle *tab, int t)
+{
+	int n = 0, tableft, tabright, contenttop, lowery, lefttop, righttop;
+
+	if (width <= 2 * t || height <= 2 * t)
+		return 0;
+
+	if (!tab) {
+		n = outlineadd(rects, n, max, 0, 0, width, t);
+		n = outlineadd(rects, n, max, 0, height - t, width, t);
+		n = outlineadd(rects, n, max, 0, t, t, height - 2 * t);
+		n = outlineadd(rects, n, max, width - t, t, t, height - 2 * t);
+		return n;
+	}
+
+	contenttop = t + tab->y + tab->height;
+	lowery = contenttop - t;
+	tableft = t + tab->x;
+	tabright = tableft + tab->width;
+
+	/* Top edge over the focused tab. */
+	n = outlineadd(rects, n, max, tableft, 0, tab->width, t);
+
+	if (tab->x > 0) {
+		/* Lowered top edge over the inactive tabs on the left and the
+		 * step up to the focused tab. */
+		n = outlineadd(rects, n, max, 0, lowery, tableft, t);
+		n = outlineadd(rects, n, max, tableft - t, 0, t, contenttop);
+	}
+	if (tab->x + tab->width < containerw) {
+		n = outlineadd(rects, n, max, tabright, 0, t, contenttop);
+		n = outlineadd(rects, n, max, tabright, lowery,
+			width - tabright, t);
+	}
+
+	/* The vertical edges start at the level of their adjacent top edge. */
+	lefttop = (tab->x > 0) ? lowery : 0;
+	righttop = (tab->x + tab->width < containerw) ? lowery : 0;
+	n = outlineadd(rects, n, max, 0, lefttop, t, height - lefttop);
+	n = outlineadd(rects, n, max, width - t, righttop, t, height - righttop);
+	n = outlineadd(rects, n, max, 0, height - t, width, t);
+
+	return n;
+}
+
+static void
+outlineshape(int width, int height, int containerw, const XRectangle *tab)
+{
+	XRectangle rects[8];
+	int n;
+
+	n = outlinerects(rects, LENGTH(rects), width, height, containerw, tab,
+		(int)outlinepx);
+	XShapeCombineRectangles(dpy, outlinewin, ShapeBounding, 0, 0,
+		rects, n, ShapeSet, Unsorted);
+}
+
+/* Tab rectangle of `c` relative to its frame's outer rect, or 0 when the
+ * frame has no shared tab strip. Mirrors the geometry drawtitle() publishes
+ * as _DWM_TAB. */
+static int
+outlinetabrect(Client *c, XRectangle *tab)
+{
+	Monitor *m = c->mon;
+	Client *t, *list[32];
+	int n = 0, i, idx = -1, tw, cellw, tx, twi;
+
+	if (!m || !c->title || c->isfullscreen || c->isfloating
+	|| titleheight <= 0 || m->lt[m->sellt]->arrange != tabbed)
+		return 0;
+	tw = c->w - 2 * c->bw;
+	if (tw <= 0)
+		return 0;
+	for (t = nexttiled(m->clients); t && n < (int)LENGTH(list);
+	     t = nexttiled(t->next))
+		list[n++] = t;
+	if (n <= 1)
+		return 0;
+	cellw = tw / n;
+	for (i = 0; i < n; i++)
+		if (list[i] == c) {
+			idx = i;
+			break;
+		}
+	if (idx < 0)
+		return 0;
+	tx = idx * cellw;
+	twi = (idx == n - 1) ? tw - tx : cellw;
+	tab->x = (idx == 0) ? 0 : c->bw + tx;
+	tab->y = 0;
+	tab->width = twi + ((idx == 0) ? c->bw : 0)
+		+ ((idx == n - 1) ? c->bw : 0);
+	tab->height = c->bw + titleheight;
+	return 1;
+}
+
+static void
+outlinecreate(void)
+{
+	XSetWindowAttributes swa;
+	int major = 0, minor = 0, eventbase, errorbase;
+
+	if (!outlinepx)
+		return;
+	if (!XShapeQueryExtension(dpy, &eventbase, &errorbase)) {
+		fprintf(stderr, "dwm: XShape missing, focus outline disabled\n");
+		return;
+	}
+	if (!XShapeQueryVersion(dpy, &major, &minor)
+	|| major < 1 || (major == 1 && minor < 1)) {
+		fprintf(stderr, "dwm: XShape 1.1 (ShapeInput) missing, focus outline disabled\n");
+		return;
+	}
+
+	swa.override_redirect = True;
+	swa.background_pixel = scheme[SchemeAccent][ColFg].pixel;
+	swa.border_pixel = 0;
+	swa.event_mask = NoEventMask;
+	outlinewin = XCreateWindow(dpy, root, 0, 0, 1, 1, 0, CopyFromParent,
+		InputOutput, CopyFromParent,
+		CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWEventMask, &swa);
+	if (!outlinewin) {
+		fprintf(stderr, "dwm: could not create the focus outline window\n");
+		return;
+	}
+	/* Empty input shape: clicks go through the outline to the frame. */
+	XShapeCombineRectangles(dpy, outlinewin, ShapeInput, 0, 0, NULL, 0,
+		ShapeSet, Unsorted);
+	XStoreName(dpy, outlinewin, "dwm-focus-outline");
+}
+
+static void
+outlinehide(void)
+{
+	if (outlinewin && outlinemapped) {
+		XUnmapWindow(dpy, outlinewin);
+		outlinemapped = 0;
+	}
+	outlinetabvalid = 0;
+}
+
+/* Keep the outline around selmon->sel: its frame's outer rect plus the tab
+ * notch, hidden while the client is fullscreen. Only the width of the frame
+ * is used, so this works on every monitor and while moving/resizing. */
+static void
+outlineupdate(void)
+{
+	XWindowChanges wc;
+	XRectangle tab;
+	Client *c;
+	int hastab, t = (int)outlinepx;
+	int x, y, w, h;
+
+	if (!outlinewin)
+		return;
+	c = selmon ? selmon->sel : NULL;
+	if (!c || !c->mapped || !ISVISIBLE(c) || c->isfullscreen
+	|| c->w < 1 || c->h < 1
+	|| c->w + 2 * t > SHRT_MAX || c->h + 2 * t > SHRT_MAX) {
+		outlinehide();
+		return;
+	}
+
+	x = c->x - t;
+	y = c->y - t;
+	w = c->w + 2 * t;
+	h = c->h + 2 * t;
+	hastab = outlinetabrect(c, &tab);
+
+	if (!outlinemapped || x != outlinex || y != outliney
+	|| w != outlinew || h != outlineh || hastab != outlinetabvalid
+	|| (hastab && (tab.x != outlinetab.x || tab.y != outlinetab.y
+	|| tab.width != outlinetab.width || tab.height != outlinetab.height))) {
+		XMoveResizeWindow(dpy, outlinewin, x, y, w, h);
+		outlineshape(w, h, c->w, hastab ? &tab : NULL);
+		outlinex = x;
+		outliney = y;
+		outlinew = w;
+		outlineh = h;
+		outlinetabvalid = hastab;
+		if (hastab)
+			outlinetab = tab;
+	}
+
+	if (!outlinemapped) {
+		XMapWindow(dpy, outlinewin);
+		outlinemapped = 1;
+	}
+
+	/* Stack immediately above the focused frame, so floating windows,
+	 * menus and notifications stacked higher stay visible. */
+	wc.sibling = c->frame;
+	wc.stack_mode = Above;
+	XConfigureWindow(dpy, outlinewin, CWSibling | CWStackMode, &wc);
+}
+
 void
 pop(Client *c)
 {
@@ -2440,6 +2683,8 @@ resizeclient(Client *c, int x, int y, int w, int h)
 	XMoveResizeWindow(dpy, c->win, 0, th, cw, ch);
 	configure(c);
 	XSync(dpy, False);
+	if (c == selmon->sel)
+		outlineupdate();
 }
 
 void
@@ -2619,6 +2864,7 @@ restack(Monitor *m)
 	}
 	XSync(dpy, False);
 	while (XCheckMaskEvent(dpy, EnterWindowMask, &ev));
+	outlineupdate();
 }
 
 void
@@ -2781,6 +3027,8 @@ setfullscreen(Client *c, int fullscreen)
 		drawtitle(c, c == selmon->sel);
 		arrange(c->mon);
 	}
+	if (c == selmon->sel)
+		outlineupdate();
 }
 
 void
@@ -2992,6 +3240,8 @@ setup(void)
 	scheme = ecalloc(LENGTH(colors), sizeof(Clr *));
 	for (i = 0; i < LENGTH(colors); i++)
 		scheme[i] = drw_scm_create(drw, colors[i], 3);
+	/* init focus outline */
+	outlinecreate();
 	/* init system tray */
 	updatesystray();
 	/* init bars */

@@ -3,6 +3,9 @@
 
 include config.mk
 
+INSTALL ?= install
+DESTDIR ?=
+
 SRC = drw.c dwm.c util.c
 OBJ = ${SRC:.c=.o}
 
@@ -30,23 +33,32 @@ dist: clean
 	gzip dwm-${VERSION}.tar
 	rm -rf dwm-${VERSION}
 
-install-local: all
-	mkdir -p ${HOME}/.local/bin ${HOME}/.local/share/man/man1
-	cp -f dwm ${HOME}/.local/bin/dwm
-	chmod 755 ${HOME}/.local/bin/dwm
-	sed "s/VERSION/${VERSION}/g" < dwm.1 > ${HOME}/.local/share/man/man1/dwm.1
-	chmod 644 ${HOME}/.local/share/man/man1/dwm.1
+install: install-wm install-session
 
-install: all
-	mkdir -p ${DESTDIR}${PREFIX}/bin
-	cp -f dwm ${DESTDIR}${PREFIX}/bin
-	chmod 755 ${DESTDIR}${PREFIX}/bin/dwm
-	mkdir -p ${DESTDIR}${MANPREFIX}/man1
-	sed "s/VERSION/${VERSION}/g" < dwm.1 > ${DESTDIR}${MANPREFIX}/man1/dwm.1
-	chmod 644 ${DESTDIR}${MANPREFIX}/man1/dwm.1
+# Atomic replace: the running dwm keeps its old inode, so `make install`
+# never fails with "Text file busy" and the current session is undisturbed.
+install-wm: all
+	${INSTALL} -d "${DESTDIR}${BINDIR}" "${DESTDIR}${MANPREFIX}/man1"
+	tmp="${DESTDIR}${BINDIR}/dwm.$$$$"; \
+	${INSTALL} -m 755 dwm "$${tmp}" && \
+	mv -f "$${tmp}" "${DESTDIR}${BINDIR}/dwm"
+	tmp="${DESTDIR}${MANPREFIX}/man1/dwm.1.$$$$"; \
+	sed "s/VERSION/${VERSION}/g" < dwm.1 > "$${tmp}" && \
+	chmod 644 "$${tmp}" && \
+	mv -f "$${tmp}" "${DESTDIR}${MANPREFIX}/man1/dwm.1"
+
+# Session files are per-user; skip them for root/system and DESTDIR installs.
+install-session:
+	@if [ -z "${DESTDIR}" ] && [ "$$(id -u)" -ne 0 ]; then \
+		./integration/install.sh; \
+	else \
+		echo "Skipping per-user session files (run ./integration/install.sh as your user)."; \
+	fi
+
+install-local: install-wm
 
 uninstall:
-	rm -f ${DESTDIR}${PREFIX}/bin/dwm\
-		${DESTDIR}${MANPREFIX}/man1/dwm.1
+	rm -f "${DESTDIR}${BINDIR}/dwm" \
+		"${DESTDIR}${MANPREFIX}/man1/dwm.1"
 
-.PHONY: all clean dist install install-local uninstall
+.PHONY: all clean dist install install-wm install-session install-local uninstall

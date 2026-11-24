@@ -4,18 +4,21 @@
 set -u
 
 # Display managers often start with a minimal PATH; the helpers (and dwm
-# installed with `make install-local`) live in ~/.local/bin.
+# installed with `make install`) live in ~/.local/bin.
 PATH="$HOME/.local/bin:$PATH"
 export PATH
 
 mkdir -p "$HOME/.dwm"
 rm -f "$HOME/.dwm/exit"
 
-# Autostart only once per X session; i3-focus-outline, nm-applet and the
-# clock keep running when dwm re-execs.
+# Autostart only once per X session; nm-applet and the clock keep running
+# when dwm re-execs.
 "$HOME/.dwm/autostart.sh" >/dev/null 2>&1 &
 
 while :; do
+	# The focus outline is built into dwm now; drop a helper left over from
+	# an older install (comm is truncated to 15 characters).
+	pkill -x i3-focus-outlin 2>/dev/null || true
 	"${DWM:-dwm}"
 	if [ -f "$HOME/.dwm/exit" ]; then
 		rm -f "$HOME/.dwm/exit"

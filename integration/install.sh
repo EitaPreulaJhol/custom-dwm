@@ -49,13 +49,13 @@ Without a display manager, startx reads ~/.xsession:
   SESSION=i3 startx      # i3
 
 Next steps:
-  1. Install the WM binary:  make install-local  (or: sudo make clean install)
-  2. Install the focus outline:        (cd ../../Projects/i3-focus-outline-rs && make install)
-  3. Log in with the "dwm" session, or (no DM) just run:
+  1. The WM binary is installed by 'make install' (or, system-wide,
+     'sudo make install PREFIX=/usr/local').
+  2. Log in with the "dwm" session, or (no DM) just run:
          startx                 # dwm
          SESSION=i3 startx      # i3
 
-The autostart script expects dwm, i3-focus-outline and dwm-clock to be on PATH.
+The autostart script expects dwm and dwm-clock to be on PATH.
 For a system-wide xsessions entry (display managers that ignore ~/.local):
   sudo install -m644 "$HOME/.local/share/xsessions/dwm.desktop" /usr/share/xsessions/dwm.desktop
 EOF

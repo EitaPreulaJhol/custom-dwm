@@ -77,6 +77,5 @@ fi
 kill "$CLIENT_PID" "$SETBG_PID" "$XVFB_PID" 2>/dev/null || true
 kill "$SESSION_PID" 2>/dev/null || true
 pkill -x dwm 2>/dev/null || true
-pkill -x i3-focus-outline 2>/dev/null || true
 pkill -x dwm-clock 2>/dev/null || true
 cat /tmp/session.log >&2

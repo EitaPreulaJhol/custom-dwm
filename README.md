@@ -5,7 +5,7 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
 ## Features
 
 - **Frames and title bars** - 20px title bar with a real 16px
-  `_NET_WM_ICON` (blank if absent), i3's 5px border and colors. Drag the title
+  `_NET_WM_ICON` (blank if absent), i3-style border and colors. Drag the title
   to move, Win+Space toggles floating, Button3 resizes (on borders).
 - **Tabbed mode** - the title bar becomes a shared, clickable tab strip;
   `Mod+Left/Right` cycles tabs. Only the active tab is mapped, and remaps
@@ -17,8 +17,10 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
   uniform 10px inner and outer gaps.
 - **Prompts** - fixed-size GCR/keyring dialogs are floated and centered at
   their hinted size so their buttons are not clipped.
-- **Focus outline** - the `i3-focus-outline` helper was ported to EWMH/X11;
-  it follows the real X focus and keeps the i3 tab notch (`_DWM_TAB`).
+- **Focus outline** - a 2px orange outline around the focused frame, drawn by
+  dwm on a shaped, input-transparent overlay; in tabbed mode it follows the
+  focused tab with the i3 notch. Nothing external to install. The thickness is
+  `outlinepx` in `config.h`; the color is `col_accent`.
 - **Session** - `integration/` has autostart, the clock, in-place restart, the
   exit confirmation, and the xsession selector.
 
@@ -32,17 +34,45 @@ restart assigns hidden clients to the current tag; icons come only from
 make
 ```
 
-Dependencies: `libx11-dev`, `libxft-dev`, `libxinerama-dev`,
-`libfontconfig1-dev`.
+Dependencies: `libx11-dev`, `libxext-dev`, `libxft-dev`,
+`libxinerama-dev`, `libfontconfig1-dev`.
 
 ```sh
-sudo make clean install          # /usr/local/bin/dwm
-# or
-make install-local               # ~/.local/bin/dwm
-
-(cd ../../Projects/i3-focus-outline-rs && make install)
-./integration/install.sh
+make install
 ```
+
+`make install` is the per-user install used by this setup. It installs `dwm`
+and the man page under `~/.local` (`PREFIX` defaults to `~/.local`), then
+refreshes the session files in `~/.dwm`, the helper symlinks and the xsession
+entry via `integration/install.sh`. The binary is replaced atomically, so the
+current dwm and X session are not interrupted; the new binary is used on the
+next in-place restart (`Mod+Shift+r`) or login. On restart, `dwm-restart` also
+stops any external `i3-focus-outline` helper left over from an older install,
+since the outline is now part of dwm.
+
+| Target | Purpose |
+|---|---|
+| `make install` | per-user binary, man page and session files |
+| `make install-wm` | per-user binary and man page only |
+| `make install-session` | per-user session files only |
+| `make install-local` | alias for `make install-wm` |
+| `make uninstall` | remove the installed binary and man page |
+
+For a system-wide binary:
+
+```sh
+sudo make install PREFIX=/usr/local
+```
+
+That skips the per-user session files; run `./integration/install.sh` as
+yourself if they still need installing. To stage a package:
+
+```sh
+make install-wm DESTDIR=/tmp/pkg PREFIX=/usr
+```
+
+`BINDIR` and `MANPREFIX` can be overridden separately; `DESTDIR` is prepended
+to both.
 
 With a display manager, choose the `dwm` session. Without one, `startx` uses
 the installed `~/.xsession`:
@@ -54,7 +84,7 @@ SESSION=i3 startx      # the old i3 session
 
 Do not add `~/.xinitrc`: it bypasses `/etc/X11/Xsession` (dbus, `xrdb`,
 ssh-agent). The session wrapper re-execs dwm on exit, so `Mod+Shift+r` keeps
-clients and helpers alive.
+clients and helpers alive and switches to the newly installed binary.
 
 ## Key bindings
 
@@ -104,9 +134,11 @@ docker run --rm -e SHOW_TRAY=1 -v "$PWD":/src -v /tmp/dwm-out:/out \
 ```
 
 `test/run.sh` accepts `SHOW_CLIENTS`, `SHOW_ST`, `SHOW_TRAY` and the `TEST_*`
-flags. `test/session.sh` covers restart/exit; `test/icons.sh`,
-`test/modes.sh`, and `test/fixed.sh` cover icons, binding modes, and fixed-size
-prompts.
+flags. `TEST_OUTLINE=1` (with `SHOW_CLIENTS=1`) checks the in-process focus
+outline: geometry around the focused frame, empty input shape, hiding in
+fullscreen, and the notched tabbed shape. `test/session.sh` covers
+restart/exit; `test/icons.sh`, `test/modes.sh`, and `test/fixed.sh` cover
+icons, binding modes, and fixed-size prompts.
 
 ## Files
 

@@ -14,13 +14,6 @@ if command -v nm-applet >/dev/null 2>&1; then
 	nm-applet >/dev/null 2>&1 &
 fi
 
-# Focus outline helper (EWMH/X11; survives dwm restarts).
-if command -v i3-focus-outline >/dev/null 2>&1; then
-	# comm is truncated to 15 chars, so -x must use the truncated name
-	pkill -x i3-focus-outlin 2>/dev/null || true
-	i3-focus-outline >/dev/null 2>&1 &
-fi
-
 # Polkit authentication agent.
 if [ -x /usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 ]; then
 	/usr/lib/policykit-1-gnome/polkit-gnome-authentication-agent-1 >/dev/null 2>&1 &

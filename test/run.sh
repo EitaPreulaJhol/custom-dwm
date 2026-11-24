@@ -40,14 +40,6 @@ xset -dpms 2>/dev/null || true
 DWM_PID=$!
 sleep 0.4
 
-if command -v i3-focus-outline >/dev/null 2>&1; then
-	i3-focus-outline >/tmp/outline.log 2>&1 &
-	OUTLINE_PID=$!
-else
-	OUTLINE_PID=
-fi
-sleep 0.2
-
 # Date/clock, normally fed by dwm-clock.
 xsetroot -name "${STATUS_TEXT:-$(date '+%d-%m-%Y %H:%M')}"
 sleep 0.2
@@ -278,6 +270,58 @@ if [ "${TEST_FULLSCREEN:-0}" = 1 ]; then
 	sleep 0.5
 fi
 
+if [ "${TEST_OUTLINE:-0}" = 1 ]; then
+	cc -O2 -o /tmp/parent test/parent.c -lX11
+	cc -O2 -o /tmp/inputshape test/inputshape.c -lX11 -lXext
+	OUT=$(xwininfo -root -tree | awk '/"dwm-focus-outline"/ {print $1; exit}')
+	A=$(xdotool getactivewindow)
+	FP=$(/tmp/parent "$A")
+	FX=$(xwininfo -id "$FP" | awk '/Absolute upper-left X/ {print $4}')
+	FY=$(xwininfo -id "$FP" | awk '/Absolute upper-left Y/ {print $4}')
+	FW=$(xwininfo -id "$FP" | awk '/Width:/ {print $2}')
+	FH=$(xwininfo -id "$FP" | awk '/Height:/ {print $2}')
+	FB=$(xwininfo -id "$FP" | awk '/Border width/ {print $3}')
+	OW=$((FW + 2 * FB))
+	OH=$((FH + 2 * FB))
+	OX=$(xwininfo -id "$OUT" | awk '/Absolute upper-left X/ {print $4}')
+	OY=$(xwininfo -id "$OUT" | awk '/Absolute upper-left Y/ {print $4}')
+	OWO=$(xwininfo -id "$OUT" | awk '/Width:/ {print $2}')
+	OHO=$(xwininfo -id "$OUT" | awk '/Height:/ {print $2}')
+	{
+		echo "frame $FP at $FX,$FY ${OW}x${OH} (border $FB)"
+		echo "outline $OUT at $OX,$OY ${OWO}x${OHO}"
+		if [ "$OUT" != "" ] && [ "$OX" = $((FX - 2)) ] \
+		&& [ "$OY" = $((FY - 2)) ] && [ "$OWO" = $((OW + 4)) ] \
+		&& [ "$OHO" = $((OH + 4)) ]; then
+			echo "geometry ok"
+		else
+			echo "geometry mismatch"
+		fi
+		echo "plain shape:"
+	} >/out/outline.txt
+	/tmp/inputshape "$OUT" >>/out/outline.txt
+	import -window root /out/outline.png
+
+	# Fullscreen must hide the outline, leaving it must restore it.
+	xdotool key --clearmodifiers super+shift+f
+	sleep 0.4
+	echo "fullscreen map=$(xwininfo -id "$OUT" | awk '/Map State/ {print $3}')" \
+		>>/out/outline.txt
+	import -window root /out/outline-fullscreen.png
+	xdotool key --clearmodifiers super+shift+f
+	sleep 0.4
+	echo "restored map=$(xwininfo -id "$OUT" | awk '/Map State/ {print $3}')" \
+		>>/out/outline.txt
+
+	# Tabbed mode publishes _DWM_TAB and uses the notched bounding shape.
+	xdotool key --clearmodifiers super+w
+	sleep 0.4
+	echo "tabbed shape:" >>/out/outline.txt
+	xprop -id "$FP" _DWM_TAB >>/out/outline.txt
+	/tmp/inputshape "$OUT" >>/out/outline.txt
+	import -window root /out/outline-tabbed.png
+fi
+
 LAUNCHER_PID=
 if [ "${TEST_LAUNCHER:-0}" = 1 ]; then
 	printf 'firefox\nterminal\nfiles\neditor\nsettings\n' | \
@@ -294,11 +338,11 @@ import -window root /out/shot.png
 import -window root -crop 1366x20+0+0 +repage /out/bar.png
 xwd -root -silent >/out/root.xwd 2>/dev/null || true
 
-[ -n "${OUTLINE_PID:-}" ] && kill "$OUTLINE_PID" 2>/dev/null || true
 kill "${SETBG_PID:-0}" 2>/dev/null || true
 kill "${TRAY1:-0}" "${TRAY2:-0}" "${TRAY3:-0}" 2>/dev/null || true
-kill "${LAUNCHER_PID:-0}" 2>/dev/null || true
+if [ -n "${LAUNCHER_PID:-}" ]; then
+	kill "$LAUNCHER_PID" 2>/dev/null || true
+fi
 kill "$DWM_PID" 2>/dev/null || true
 wait "$DWM_PID" 2>/dev/null || true
-[ -f /tmp/outline.log ] && cat /tmp/outline.log >&2
-[ -f /tmp/launcher.log ] && cat /tmp/launcher.log >&2
+[ -f /tmp/launcher.log ] && cat /tmp/launcher.log >&2 || true
