@@ -1,7 +1,7 @@
 # dwm — i3 look and controls
 
 dwm 6.8 deployed with the look and key bindings of the reference i3 session
-(`based_on/i3_base_config`, `based_on/base_looks.png`). The original plan and
+(the reference i3 config and screenshot). The original plan and
 the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
 
 ## What is here
@@ -37,7 +37,7 @@ exposed, so the previous tab's image cannot linger.
   gap on all four monitor edges (a maximized window keeps the same frame on
   every side). The frames make the gaps exact even for terminals with size
   hints.
-- **Controls** — every binding from `based_on/i3_base_config`, including
+- **Controls** — every binding from the reference i3 config, including
   `resize`/`move` modes, `back_and_forth`, directional focus/move, and the
   floating maximum size. Floating moves do not snap or re-apply size hints.
 - **Focus outline** — `../../Projects/i3-focus-outline-rs` was ported from i3 IPC to
@@ -177,7 +177,7 @@ normal `Mod+arrow` focus works after leaving the mode.
 `FIXED_CLASS=Gcr-prompter` or `Test-fixed`) checks fixed-size prompts: the
 client must end at `939x111` inside a centered `949x141` frame.
 
-Against `based_on/base_looks.png` (same date string, no client windows) the
+Against the reference screenshot (same date string, no client windows) the
 tag strip, separator, clock position and tray geometry are pixel-identical;
 the remaining differences are Xft-vs-Pango glyph antialiasing and the tray
 icon contents.
