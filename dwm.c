@@ -112,6 +112,7 @@ struct Client {
 	float mina, maxa;
 	int x, y, w, h;
 	int oldx, oldy, oldw, oldh;
+	int natx, naty, natw, nath; /* geometry requested when mapped */
 	int basew, baseh, incw, inch, maxw, maxh, minw, minh, hintsvalid;
 	int bw, oldbw;
 	unsigned int tags;
@@ -223,6 +224,7 @@ static void focusin(XEvent *e);
 static void focusmode(const Arg *arg);
 static void focusmon(const Arg *arg);
 static void focusstack(const Arg *arg);
+static void floatnatural(Client *c);
 static void focustab(const Arg *arg);
 static void focustask(const Arg *arg);
 static Atom getatomprop(Client *c, Atom prop);
@@ -1454,6 +1456,8 @@ drawtasks(Monitor *m, int x, int right)
 			x += sepw;
 		}
 	}
+	/* Right edge of the last task, used by buttonpress' hit test. */
+	m->taskx[shown] = x;
 	if (hidden) {
 		char chip[32];
 		snprintf(chip, sizeof chip, "+%d", hidden);
@@ -1751,6 +1755,28 @@ focusstack(const Arg *arg)
 	}
 }
 
+/* Put c back at the size/position the client requested when it was mapped,
+ * like i3's floating_enable(): the tiled cell is usually larger than
+ * floating_maximum_size, so keeping it left no room to grow in resize mode. */
+void
+floatnatural(Client *c)
+{
+	Monitor *m = c->mon;
+	int x = c->natx, y = c->naty, w = c->natw, h = c->nath;
+
+	if (w <= 0 || h <= 0)
+		return;
+	w = MIN(w, floatmaxw);
+	h = MIN(h, floatmaxh);
+	if (x + w > m->wx + m->ww)
+		x = m->wx + m->ww - w;
+	if (y + h > m->wy + m->wh)
+		y = m->wy + m->wh - h;
+	x = MAX(x, m->wx);
+	y = MAX(y, m->wy);
+	resize(c, x, y, w, h, 0);
+}
+
 Atom
 getatomprop(Client *c, Atom prop)
 {
@@ -1990,6 +2016,12 @@ manage(Window w, XWindowAttributes *wa)
 		c->y = c->mon->wy + c->mon->wh - c->h;
 	c->x = MAX(c->x, c->mon->wx);
 	c->y = MAX(c->y, c->mon->wy);
+	/* i3 floats a window at the geometry it asked for when it was mapped,
+	 * not at the tiled cell it happened to occupy. */
+	c->natx = c->x;
+	c->naty = c->y;
+	c->natw = c->w;
+	c->nath = c->h;
 
 	fwa.override_redirect = True;
 	fwa.background_pixel = scheme[SchemeNorm][ColBorder].pixel;
@@ -2253,8 +2285,12 @@ movemouse(const Arg *arg)
 			else if (abs((selmon->wy + selmon->wh) - (ny + HEIGHT(c))) < snap)
 				ny = selmon->wy + selmon->wh - HEIGHT(c);
 			if (!c->isfloating && selmon->lt[selmon->sellt]->arrange
-			&& (abs(nx - c->x) > snap || abs(ny - c->y) > snap))
-				togglefloating(NULL);
+			&& (abs(nx - c->x) > snap || abs(ny - c->y) > snap)) {
+				/* Drag-to-float keeps the current cell; the explicit
+				 * Mod+Space toggle is what restores natural size. */
+				c->isfloating = 1;
+				arrange(selmon);
+			}
 			if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
 				resize(c, nx, ny, c->w, c->h, 1);
 			break;
@@ -2641,10 +2677,15 @@ resize(Client *c, int x, int y, int w, int h, int interact)
 			resizeclient(c, x, y, w, h);
 		return;
 	}
-	/* Clamp only when the size is actually being changed. */
+	/* Limit growth to the floating maximum, but only while the window is
+	 * still within it: a window that is already larger (a tiled cell that
+	 * was just floated) must not be shrunk by the first resize, and must
+	 * stay resizable beyond the maximum. */
 	if (c->isfloating && !c->isfullscreen) {
-		w = MIN(w, floatmaxw);
-		h = MIN(h, floatmaxh);
+		if (c->w <= floatmaxw)
+			w = MIN(w, floatmaxw);
+		if (c->h <= floatmaxh)
+			h = MIN(h, floatmaxh);
 	}
 	if (applysizehints(c, &x, &y, &w, &h, interact))
 		resizeclient(c, x, y, w, h);
@@ -2808,8 +2849,12 @@ resizemouse(const Arg *arg)
 				nh = 2 * c->bw + titleheight + 1;
 			}
 			if (!c->isfloating && c->mon->lt[c->mon->sellt]->arrange
-			&& (abs(nw - c->w) > snap || abs(nh - c->h) > snap))
-				togglefloating(NULL);
+			&& (abs(nw - c->w) > snap || abs(nh - c->h) > snap)) {
+				/* Drag-to-float keeps the current cell; the explicit
+				 * Mod+Space toggle is what restores natural size. */
+				c->isfloating = 1;
+				arrange(c->mon);
+			}
 			if (!c->mon->lt[c->mon->sellt]->arrange || c->isfloating)
 				resize(c, nx, ny, nw, nh, 1);
 			break;
@@ -3133,17 +3178,17 @@ modekey(XEvent *e, KeySym keysym)
 	if (wmmode == ModeResize) {
 		if (c->isfullscreen)
 			return 1;
-		if (c->isfloating) {
-			int dx = 0, dy = 0;
+		if (c->isfloating || !c->mon->lt[c->mon->sellt]->arrange) {
+			int x = c->x, y = c->y, w = c->w, h = c->h;
 
 			switch (keysym) {
-			case XK_Left:  case XK_j: dx = -10; break;
-			case XK_Right: case XK_semicolon: dx = 10; break;
-			case XK_Up:    case XK_l: dy = -10; break;
-			case XK_Down:  case XK_k: dy = 10; break;
+			case XK_Left:  case XK_j: w = MAX(1, w - step); break;
+			case XK_Right: case XK_semicolon: w = MAX(1, w + step); break;
+			case XK_Up:    case XK_l: h = MAX(1, h - step); break;
+			case XK_Down:  case XK_k: h = MAX(1, h + step); break;
 			default: return 1;
 			}
-			resize(c, c->x, c->y, MAX(1, c->w + dx), MAX(1, c->h + dy), 1);
+			resize(c, x, y, w, h, 1);
 		} else {
 			switch (keysym) {
 			case XK_Left:  case XK_j: a.f = -0.02f; setmfact(&a); break;
@@ -3162,7 +3207,7 @@ modekey(XEvent *e, KeySym keysym)
 			return 1;
 		if (shift)
 			step = 50;
-		if (c->isfloating) {
+		if (c->isfloating || !c->mon->lt[c->mon->sellt]->arrange) {
 			int x = c->x, y = c->y;
 
 			switch (keysym) {
@@ -3508,9 +3553,13 @@ togglefloating(const Arg *arg)
 	if (selmon->sel->isfullscreen) /* no support for fullscreen windows */
 		return;
 	selmon->sel->isfloating = !selmon->sel->isfloating || selmon->sel->isfixed;
-	if (selmon->sel->isfloating)
-		resize(selmon->sel, selmon->sel->x, selmon->sel->y,
-			selmon->sel->w, selmon->sel->h, 0);
+	if (selmon->sel->isfloating) {
+		if (selmon->lt[selmon->sellt]->arrange)
+			floatnatural(selmon->sel);
+		else
+			resize(selmon->sel, selmon->sel->x, selmon->sel->y,
+				selmon->sel->w, selmon->sel->h, 0);
+	}
 	arrange(selmon);
 }
 
