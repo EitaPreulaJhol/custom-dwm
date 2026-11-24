@@ -115,6 +115,7 @@ struct Client {
 	int bw, oldbw;
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
+	int mapped; /* frame currently mapped by showhide() */
 	Client *next;
 	Client *snext;
 	Monitor *mon;
@@ -1428,6 +1429,42 @@ focusdir(const Arg *arg)
 
 	if (!selmon->sel)
 		return;
+
+	/* In tabbed/stacking layouts every tiled frame has the same rectangle,
+	 * so geometry cannot choose a neighbour. Left/right cycles the visible
+	 * tiling order instead, i.e. the tabs. */
+	if (arg->i == DirLeft || arg->i == DirRight) {
+		const Layout *l = selmon->lt[selmon->sellt];
+
+		if (l->arrange == tabbed || l->arrange == monocle) {
+			Client *list[64];
+			unsigned int n = 0, i, idx = 0;
+
+			for (c = nexttiled(selmon->clients); c && n < LENGTH(list);
+			     c = nexttiled(c->next))
+				list[n++] = c;
+			if (n == 0)
+				return;
+			if (selmon->sel && !selmon->sel->isfloating) {
+				for (i = 0; i < n; i++)
+					if (list[i] == selmon->sel) {
+						idx = i;
+						break;
+					}
+			} else if (selmon->tabsel) {
+				for (i = 0; i < n; i++)
+					if (list[i] == selmon->tabsel) {
+						idx = i;
+						break;
+					}
+			}
+			idx = (arg->i == DirLeft) ? (idx + n - 1) % n : (idx + 1) % n;
+			focus(list[idx]);
+			restack(selmon);
+			return;
+		}
+	}
+
 	sx = selmon->sel->x + selmon->sel->w / 2;
 	sy = selmon->sel->y + selmon->sel->h / 2;
 	for (c = selmon->clients; c; c = c->next) {
@@ -2830,6 +2867,14 @@ showhide(Client *c)
 		XMoveResizeWindow(dpy, c->frame, c->x, c->y,
 			c->w - 2 * c->bw, c->h - 2 * c->bw);
 		XMapWindow(dpy, c->frame);
+		if (!c->mapped) {
+			/* The client window stays mapped; when its frame is
+			 * remapped the server may not send it an Expose, so the
+			 * framebuffer could keep the previous tab/tag image.
+			 * Clear and force a full repaint. */
+			c->mapped = 1;
+			XClearArea(dpy, c->win, 0, 0, 0, 0, True);
+		}
 		drawtitle(c, c == selmon->sel);
 		if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating) && !c->isfullscreen)
 			resize(c, c->x, c->y, c->w, c->h, 0);
@@ -2837,7 +2882,10 @@ showhide(Client *c)
 	} else {
 		/* hide clients bottom up */
 		showhide(c->snext);
-		XUnmapWindow(dpy, c->frame);
+		if (c->mapped) {
+			XUnmapWindow(dpy, c->frame);
+			c->mapped = 0;
+		}
 	}
 }
 

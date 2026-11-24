@@ -159,7 +159,22 @@ if [ "${TEST_TABS:-0}" = 1 ]; then
 	TH=$(xwininfo -id "$TITLE" | awk '/Height:/ {print $2}')
 	echo "frame=$FP title=$TITLE at $TX,$TY ${TW}x${TH}" >/out/tabs.txt
 	echo "before active=$A focus=$(xdotool getwindowfocus)" >>/out/tabs.txt
+	xdotool key --clearmodifiers super+Right
+	sleep 0.4
+	A=$(xdotool getactivewindow)
+	echo "right1 active=$A focus=$(xdotool getwindowfocus)" >>/out/tabs.txt
+	import -window root /out/tabs-right1.png
+	xdotool key --clearmodifiers super+Right
+	sleep 0.4
+	A=$(xdotool getactivewindow)
+	echo "right2 active=$A focus=$(xdotool getwindowfocus)" >>/out/tabs.txt
+	import -window root /out/tabs-right2.png
+	xdotool key --clearmodifiers super+Left
+	sleep 0.4
+	A=$(xdotool getactivewindow)
+	echo "left1 active=$A focus=$(xdotool getwindowfocus)" >>/out/tabs.txt
 	# three equal tabs; the middle one is the center of the title bar
+	A=$(xdotool getactivewindow)
 	xdotool mousemove --sync $((TX + TW / 2)) $((TY + TH / 2)) click 1
 	sleep 0.5
 	A=$(xdotool getactivewindow)

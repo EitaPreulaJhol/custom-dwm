@@ -15,8 +15,11 @@ the fidelity notes live in [`docs/PLANS.md`](docs/PLANS.md).
   `Mod`+right-drag inside the window uses the nearest corner.
   In **tabbed** mode the same title bar is a shared tab strip: one equal cell
   per tiled client, the focused tab with the light background, 1px separators,
-  and a click on a tab focuses that client. Only the active tab's content is
-  mapped; the tab strip is part of the frame.
+  and a click on a tab focuses that client. `Mod+Left/Right` also cycles the
+tabs (wrapping), like `focus left/right` inside an i3 tabbed container. Only
+the active tab's content is mapped; the tab strip is part of the frame.
+  When a frame is mapped again (tab or tag switch) its client is cleared and
+exposed, so the previous tab's image cannot linger.
 - **Fixed-size prompts** — windows that advertise `min == max` size hints
   after mapping (GCR / gnome-keyring) are floated and centered at their hinted
   size. Each frame redirects its client's ConfigureRequests, so a client can
@@ -105,7 +108,7 @@ exit, so `$mod+Shift+r` keeps all X clients and the helper processes alive.
 | `Mod+Shift+s` | `flameshot gui` |
 | `Mod+d` | `i3-launcher` |
 | `Mod+q` | close the focused window |
-| `Mod+arrows` | directional focus |
+| `Mod+arrows` | directional focus; in tabbed/stacking, Left/Right cycles windows/tabs |
 | `Mod+Shift+arrows` | move the window (tiled: reorder; floating: 10px) |
 | `Mod+h` / `Mod+v` | splith / splitv layout |
 | `Mod+Shift+f` | fullscreen |
@@ -159,7 +162,8 @@ terminals, for size-hint gaps), `SHOW_TRAY=1` (three fake XEmbed icons),
 `TEST_FLOAT=1`, `TEST_TILEDRAG=1`, `TEST_RESIZE=1`,
 `TEST_BORDERRESIZE=1`, `TEST_CORNER=TL|TR|BL|BR`, `TEST_TABS=1`,
 `TEST_FULLSCREEN=1`, `TEST_TAGSWITCH=1`, `TEST_LAUNCHER=1`. `test/session.sh` covers autostart,
-restart and the floating exit dialog. `test/fixed.sh` (with
+restart and the floating exit dialog. `TEST_TABS` also checks `Mod+Right`/`Left`
+tab switching and that active/focus stay identical. `test/fixed.sh` (with
 `FIXED_CLASS=Gcr-prompter` or `Test-fixed`) checks fixed-size prompts: the
 client must end at `939x111` inside a centered `949x141` frame.
 
