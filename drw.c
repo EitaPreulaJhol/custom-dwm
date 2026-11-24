@@ -1,4 +1,5 @@
 /* See LICENSE file for copyright and license details. */
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -59,6 +60,10 @@ drw_create(Display *dpy, int screen, Window root, unsigned int w, unsigned int h
 	drw->drawable = XCreatePixmap(dpy, root, w, h, DefaultDepth(dpy, screen));
 	drw->gc = XCreateGC(dpy, root, 0, NULL);
 	XSetLineAttributes(dpy, drw->gc, 1, LineSolid, CapButt, JoinMiter);
+	drw->iconimg = XCreateImage(dpy, DefaultVisual(dpy, screen),
+		DefaultDepth(dpy, screen), ZPixmap, 0,
+		ecalloc(ICONSIZE * ICONSIZE, sizeof(uint32_t)),
+		ICONSIZE, ICONSIZE, 32, 0);
 
 	return drw;
 }
@@ -81,6 +86,8 @@ drw_free(Drw *drw)
 {
 	XFreePixmap(drw->dpy, drw->drawable);
 	XFreeGC(drw->dpy, drw->gc);
+	if (drw->iconimg)
+		XDestroyImage(drw->iconimg);
 	drw_fontset_free(drw->fonts);
 	free(drw);
 }
@@ -404,6 +411,54 @@ no_match:
 		XftDrawDestroy(d);
 
 	return x + (render ? w : 0);
+}
+
+static unsigned long
+iconcomponent(unsigned int c, unsigned long mask)
+{
+	unsigned long m = mask;
+	unsigned int shift = 0, max;
+
+	if (!m)
+		return 0;
+	while (!(m & 1)) {
+		m >>= 1;
+		shift++;
+	}
+	max = m;
+	return ((unsigned long)c * max / 255) << shift;
+}
+
+void
+drw_icon(Drw *drw, int x, int y, const uint32_t *argb, Clr *bg)
+{
+	unsigned int i, a, r, g, b, br, bgc, bb;
+	unsigned long pix;
+
+	if (!drw || !drw->iconimg || !argb || !bg)
+		return;
+	br = bg->color.red >> 8;
+	bgc = bg->color.green >> 8;
+	bb = bg->color.blue >> 8;
+	for (i = 0; i < ICONSIZE * ICONSIZE; i++) {
+		uint32_t p = argb[i];
+
+		a = p >> 24;
+		r = (p >> 16) & 0xff;
+		g = (p >> 8) & 0xff;
+		b = p & 0xff;
+		if (a < 255) {
+			r += (br * (255 - a) + 127) / 255;
+			g += (bgc * (255 - a) + 127) / 255;
+			b += (bb * (255 - a) + 127) / 255;
+		}
+		pix = iconcomponent(r, drw->iconimg->red_mask)
+			| iconcomponent(g, drw->iconimg->green_mask)
+			| iconcomponent(b, drw->iconimg->blue_mask);
+		XPutPixel(drw->iconimg, i % ICONSIZE, i / ICONSIZE, pix);
+	}
+	XPutImage(drw->dpy, drw->drawable, drw->gc, drw->iconimg,
+		0, 0, x, y, ICONSIZE, ICONSIZE);
 }
 
 void

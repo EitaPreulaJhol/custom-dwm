@@ -22,7 +22,6 @@
  */
 #include <errno.h>
 #include <locale.h>
-#include <regex.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -75,11 +74,11 @@
 enum { CurNormal, CurResize, CurMove, CurLast }; /* cursor */
 enum { SchemeNorm, SchemeSel, SchemeUrg, SchemeTagEmpty, SchemeTagOcc,
        SchemeSeparator, SchemeAccent, SchemeTask, SchemeTaskSel, SchemeTaskUrg,
-       SchemeIcon, SchemeIconSel, SchemeIconUrg, SchemeDot }; /* color schemes */
+       SchemeIcon, SchemeDot }; /* color schemes */
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetSystemTray, NetSystemTrayOP, NetSystemTrayOrientation, NetSystemTrayOrientationHorz,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
-       NetWMWindowTypeDialog, NetClientList, NetDwmTab, NetLast }; /* EWMH atoms */
+       NetWMWindowTypeDialog, NetClientList, NetDwmTab, NetWmIcon, NetLast }; /* EWMH atoms */
 enum { Manager, Xembed, XembedInfo, XLast }; /* Xembed atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
 enum { ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkBorder, ClkTitleBar, ClkTab, ClkRootWin, ClkLast }; /* clicks */
@@ -116,6 +115,7 @@ struct Client {
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
 	int mapped; /* frame currently mapped by showhide() */
+	uint32_t *icon; /* 16x16 premultiplied ARGB, NULL = blank slot */
 	Client *next;
 	Client *snext;
 	Monitor *mon;
@@ -210,6 +210,7 @@ static void drawbars(void);
 static int drawmode(int x);
 static int drawseparator(int x);
 static int drawtag(Monitor *m, unsigned int i, int x, unsigned int occ, unsigned int urg);
+static void drawclienttitles(Client *c);
 static void drawtitle(Client *c, int focused);
 static void drawtask(Monitor *m, Client *c, int *x, int cap);
 static void drawtasks(Monitor *m, int x, int right);
@@ -283,6 +284,7 @@ static void togglefloating(const Arg *arg);
 static void togglesplit(const Arg *arg);
 static void toggletag(const Arg *arg);
 static void toggleview(const Arg *arg);
+static void freeicon(Client *c);
 static void unfocus(Client *c, int setfocus);
 static void unmanage(Client *c, int destroyed);
 static void truncatechars(const char *src, char *dst, size_t dstsz, int maxchars);
@@ -291,6 +293,7 @@ static void unmapnotify(XEvent *e);
 static void updatebarpos(Monitor *m);
 static void updatebars(void);
 static void updateclass(Client *c);
+static void updateicon(Client *c);
 static void updateclientlist(void);
 static int updategeom(void);
 static void updatenumlockmask(void);
@@ -340,8 +343,6 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 static Atom wmatom[WMLast], netatom[NetLast], xatom[XLast];
 static int running = 1;
 static int wmmode = ModeNormal;
-typedef struct { regex_t re; int ok; } CompiledIcon;
-static CompiledIcon *iconre;
 static Cur *cursor[CurLast];
 static Clr **scheme;
 static Display *dpy;
@@ -961,25 +962,137 @@ truncatepx(const char *src, char *dst, size_t dstsz, int maxpx)
 	strcpy(dst + best, ellipsis);
 }
 
-/* Case-insensitive POSIX ERE substring search over the icon patterns. */
-static const char *
-iconfor(Client *c)
+static void
+freeicon(Client *c)
 {
-	char hay[280];
-	unsigned int i;
-
-	if (!iconre) {
-		iconre = ecalloc(LENGTH(iconrules), sizeof(CompiledIcon));
-		for (i = 0; i < LENGTH(iconrules); i++)
-			iconre[i].ok = regcomp(&iconre[i].re, iconrules[i].pattern,
-				REG_EXTENDED|REG_ICASE|REG_NOSUB) == 0;
-	}
-	snprintf(hay, sizeof hay, "%s %s", c->class, c->instance);
-	for (i = 0; i < LENGTH(iconrules); i++)
-		if (iconre[i].ok && regexec(&iconre[i].re, hay, 0, NULL, 0) == 0)
-			return iconrules[i].glyph;
-	return fallbackicon;
+	free(c->icon);
+	c->icon = NULL;
 }
+
+/* Box-filter the chosen _NET_WM_ICON source down/up to 16x16 and
+ * premultiply it.  Premultiplied pixels composite over the scheme
+ * background without dark fringes on transparent icon corners. */
+static void
+scaleicon(const unsigned long *src, int sw, int sh, uint32_t *dst)
+{
+	unsigned long p;
+	unsigned long long sa, sr, sg, sb;
+	unsigned int a, r, g, b, count;
+	int x, y, sx, sy, x0, x1, y0, y1;
+
+	if (sw == ICONSIZE && sh == ICONSIZE) {
+		for (y = 0; y < ICONSIZE; y++) {
+			for (x = 0; x < ICONSIZE; x++) {
+				p = src[y * sw + x];
+				a = (p >> 24) & 0xff;
+				r = (p >> 16) & 0xff;
+				g = (p >> 8) & 0xff;
+				b = p & 0xff;
+				dst[y * ICONSIZE + x] = (a << 24)
+					| ((r * a / 255) << 16)
+					| ((g * a / 255) << 8)
+					| (b * a / 255);
+			}
+		}
+		return;
+	}
+	for (y = 0; y < ICONSIZE; y++) {
+		y0 = y * sh / ICONSIZE;
+		y1 = (y + 1) * sh / ICONSIZE;
+		if (y1 <= y0)
+			y1 = y0 + 1;
+		for (x = 0; x < ICONSIZE; x++) {
+			x0 = x * sw / ICONSIZE;
+			x1 = (x + 1) * sw / ICONSIZE;
+			if (x1 <= x0)
+				x1 = x0 + 1;
+			sa = sr = sg = sb = 0;
+			count = 0;
+			for (sy = y0; sy < y1; sy++) {
+				for (sx = x0; sx < x1; sx++) {
+					p = src[sy * sw + sx];
+					a = (p >> 24) & 0xff;
+					sa += a;
+					sr += (unsigned long long)((p >> 16) & 0xff) * a;
+					sg += (unsigned long long)((p >> 8) & 0xff) * a;
+					sb += (unsigned long long)(p & 0xff) * a;
+					count++;
+				}
+			}
+			if (!count) {
+				dst[y * ICONSIZE + x] = 0;
+				continue;
+			}
+			a = sa / count;
+			r = sr / ((unsigned long long)count * 255);
+			g = sg / ((unsigned long long)count * 255);
+			b = sb / ((unsigned long long)count * 255);
+			dst[y * ICONSIZE + x] = (a << 24) | (r << 16) | (g << 8) | b;
+		}
+	}
+}
+
+static uint32_t *
+readicon(Window w)
+{
+	Atom actual;
+	int format, have = 0, bestgood = 0, bw = 0, bh = 0;
+	unsigned long i, n, after, best = 0, bestarea = 0, iw, ih, area;
+	unsigned char *data = NULL;
+	unsigned long *prop;
+	uint32_t *icon;
+
+	if (XGetWindowProperty(dpy, w, netatom[NetWmIcon], 0, 1 << 20,
+			False, XA_CARDINAL, &actual, &format, &n, &after,
+			&data) != Success)
+		return NULL;
+	if (!data || actual != XA_CARDINAL || format != 32 || after) {
+		if (data)
+			XFree(data);
+		return NULL;
+	}
+	prop = (unsigned long *)data;
+	for (i = 0; i + 2 <= n; ) {
+		int good;
+
+		iw = prop[i];
+		ih = prop[i + 1];
+		i += 2;
+		if (!iw || !ih || iw > 512 || ih > 512)
+			break;
+		if (iw > (n - i) / ih)
+			break;
+		area = iw * ih;
+		good = iw >= ICONSIZE && ih >= ICONSIZE;
+		if (!have || (good && !bestgood)
+		|| (good == bestgood && ((good && area < bestarea)
+		|| (!good && area > bestarea)))) {
+			best = i;
+			bw = iw;
+			bh = ih;
+			bestarea = area;
+			bestgood = good;
+			have = 1;
+		}
+		i += area;
+	}
+	if (!have) {
+		XFree(data);
+		return NULL;
+	}
+	icon = ecalloc(ICONSIZE * ICONSIZE, sizeof(uint32_t));
+	scaleicon((const unsigned long *)(prop + best), bw, bh, icon);
+	XFree(data);
+	return icon;
+}
+
+static void
+updateicon(Client *c)
+{
+	freeicon(c);
+	c->icon = readicon(c->win);
+}
+
 
 /* Tag cell: " N" plus the occupied dot, with the 1px orange frame when
  * selected (matches workspaces.py's styled()+framed() output). */
@@ -1057,11 +1170,11 @@ drawtitle(Client *c, int focused)
 {
 	char raw[512], title[512];
 	int th = c->isfullscreen ? 0 : titleheight;
-	int tw, pad = 8, avail, textw;
+	int tw, pad = 8, avail, textw, iconx, textx;
 	int urgent = c->isurgent;
 	unsigned int seltitle = urgent ? SchemeUrg : focused ? SchemeSel : SchemeNorm;
 	Client *t, *list[32];
-	int n = 0, i, idx = -1, cellw, tx, twi;
+	int n = 0, i, idx = -1, cellw, tx, twi, narrow;
 	int istabbed;
 
 	if (!c->title || th <= 0)
@@ -1097,18 +1210,29 @@ drawtitle(Client *c, int focused)
 					drw_rect(drw, tx, 0, 1, th, 1, 0);
 				}
 				truncatechars(t->name, raw, sizeof raw, 64);
-				avail = twi - 12;
+				narrow = twi < 6 + ICONSIZE + icongap + 2 + 6;
+				if (narrow) {
+					textx = tx + 6;
+					avail = twi - 12;
+				} else {
+					textx = tx + 6 + ICONSIZE + icongap;
+					avail = twi - (6 + ICONSIZE + icongap) - 6;
+				}
 				if (avail < 1)
 					title[0] = '\0';
 				else if (textwidth(raw) > avail)
 					truncatepx(raw, title, sizeof title, avail);
 				else
 					snprintf(title, sizeof title, "%s", raw);
+				if (!narrow && t->icon)
+					drw_icon(drw, tx + 6, (th - ICONSIZE) / 2, t->icon,
+						&scheme[t == c->mon->tabsel
+						? SchemeSel : SchemeNorm][ColBg]);
 				textw = textwidth(title);
 				if (textw) {
 					drw_setscheme(drw, scheme[t == c->mon->tabsel
 						? SchemeSel : SchemeNorm]);
-					drw_text(drw, tx + 6, 0, textw, th, 0, title, 0);
+					drw_text(drw, textx, 0, textw, th, 0, title, 0);
 				}
 			}
 			c->mon->tabn = n;
@@ -1132,9 +1256,11 @@ drawtitle(Client *c, int focused)
 	}
 	XDeleteProperty(dpy, c->frame, netatom[NetDwmTab]);
 
-	/* single window title: left aligned, no icon */
+	/* single window title: 16px icon slot (blank if none) + text */
 	truncatechars(c->name, raw, sizeof raw, 64);
-	avail = tw - 2 * pad;
+	iconx = pad;
+	textx = pad + ICONSIZE + icongap;
+	avail = tw - textx - pad;
 	if (avail < 1)
 		title[0] = '\0';
 	else if (textwidth(raw) > avail)
@@ -1144,10 +1270,26 @@ drawtitle(Client *c, int focused)
 
 	drw_setscheme(drw, scheme[seltitle]);
 	drw_rect(drw, 0, 0, tw, th, 1, 1);
+	if (c->icon)
+		drw_icon(drw, iconx, (th - ICONSIZE) / 2, c->icon,
+			&scheme[seltitle][ColBg]);
 	textw = textwidth(title);
 	if (textw)
-		drw_text(drw, pad, 0, textw, th, 0, title, 0);
+		drw_text(drw, textx, 0, textw, th, 0, title, 0);
 	drw_map(drw, c->title, 0, 0, tw, th);
+}
+
+/* Redraw whatever title window actually shows c: in tabbed mode a hidden
+ * tiled client's icon must repaint the shared tab strip, not its own title. */
+static void
+drawclienttitles(Client *c)
+{
+	Client *t = c;
+
+	if (c->mon->lt[c->mon->sellt]->arrange == tabbed && !c->isfloating
+	&& c->mon->tabsel)
+		t = c->mon->tabsel;
+	drawtitle(t, t == c->mon->sel);
 }
 
 /* Width of one taskbar item; cap is the title's pixel budget (0 = no cap). */
@@ -1155,7 +1297,6 @@ int
 taskwidth(Client *c, int cap)
 {
 	char raw[320], title[320];
-	const char *icon = iconfor(c);
 	int w;
 
 	truncatechars(c->name, raw, sizeof raw, 28);
@@ -1164,9 +1305,7 @@ taskwidth(Client *c, int cap)
 	else
 		snprintf(title, sizeof title, "%s", raw);
 
-	w = textwidth(" ") + textwidth(title) + textwidth(" ");
-	if (icon && *icon)
-		w += textwidth(icon) + textwidth(" ");
+	w = textwidth(" ") + ICONSIZE + icongap + textwidth(title) + textwidth(" ");
 	if (c == c->mon->sel)
 		w += 2; /* 1px border on each side */
 	return w;
@@ -1176,13 +1315,11 @@ void
 drawtask(Monitor *m, Client *c, int *x, int cap)
 {
 	char raw[320], title[320];
-	const char *icon = iconfor(c);
 	int focused = c == m->sel;
 	int urgent = c->isurgent;
 	int w = taskwidth(c, cap);
 	int x0 = *x, tx;
 	int seltask = urgent ? SchemeTaskUrg : focused ? SchemeTaskSel : SchemeTask;
-	int selicon = urgent ? SchemeIconUrg : focused ? SchemeIconSel : SchemeIcon;
 
 	truncatechars(c->name, raw, sizeof raw, 28);
 	if (cap > 0)
@@ -1199,14 +1336,10 @@ drawtask(Monitor *m, Client *c, int *x, int cap)
 	drw_setscheme(drw, scheme[seltask]);
 	drw_text(drw, tx, 0, textwidth(" "), bh, 0, " ", 0);
 	tx += textwidth(" ");
-	if (icon && *icon) {
-		drw_setscheme(drw, scheme[selicon]);
-		drw_text(drw, tx, 0, textwidth(icon), bh, 0, icon, 0);
-		tx += textwidth(icon);
-		drw_setscheme(drw, scheme[seltask]);
-		drw_text(drw, tx, 0, textwidth(" "), bh, 0, " ", 0);
-		tx += textwidth(" ");
-	}
+	if (c->icon)
+		drw_icon(drw, tx, (bh - ICONSIZE) / 2, c->icon,
+			&scheme[seltask][ColBg]);
+	tx += ICONSIZE + icongap;
 	drw_text(drw, tx, 0, textwidth(title), bh, 0, title, 0);
 	tx += textwidth(title);
 	drw_text(drw, tx, 0, textwidth(" "), bh, 0, " ", 0);
@@ -1805,6 +1938,7 @@ manage(Window w, XWindowAttributes *wa)
 
 	updatetitle(c);
 	updateclass(c);
+	updateicon(c);
 	if (XGetTransientForHint(dpy, w, &trans) && (t = wintoclient(trans))) {
 		c->mon = t->mon;
 		c->tags = t->tags;
@@ -2143,6 +2277,14 @@ propertynotify(XEvent *e)
 
 	if ((ev->window == root) && (ev->atom == XA_WM_NAME))
 		updatestatus();
+	else if ((c = wintoclient(ev->window)) && ev->atom == netatom[NetWmIcon]) {
+		if (ev->state == PropertyDelete)
+			freeicon(c);
+		else
+			updateicon(c);
+		drawclienttitles(c);
+		drawbar(c->mon);
+	}
 	else if (ev->state == PropertyDelete)
 		return; /* ignore */
 	else if ((c = wintoclient(ev->window))) {
@@ -2794,6 +2936,7 @@ setup(void)
 	netatom[NetWMWindowTypeDialog] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_DIALOG", False);
 	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
 	netatom[NetDwmTab] = XInternAtom(dpy, "_DWM_TAB", False);
+	netatom[NetWmIcon] = XInternAtom(dpy, "_NET_WM_ICON", False);
 	xatom[Manager] = XInternAtom(dpy, "MANAGER", False);
 	xatom[Xembed] = XInternAtom(dpy, "_XEMBED", False);
 	xatom[XembedInfo] = XInternAtom(dpy, "_XEMBED_INFO", False);
@@ -3167,6 +3310,7 @@ unmanage(Client *c, int destroyed)
 	}
 	if (frame)
 		XDestroyWindow(dpy, frame);
+	freeicon(c);
 	free(c);
 	focus(NULL);
 	updateclientlist();

@@ -14,6 +14,7 @@ static const int showbar            = 1;        /* 0 means no bar */
 static const int topbar             = 1;        /* 0 means bottom bar */
 static const int barheight          = 20;       /* bar height in pixels (polybar theme.ini) */
 static const int titleheight        = 20;       /* per-window title bar (i3 border normal) */
+static const int icongap            = 6;        /* gap after the 16px app icon slot */
 static const int gappx              = 10;       /* gaps between windows (i3: gaps inner 10, outer 0) */
 static const int gappo              = 10;       /* gaps around the monitor edge (uniform with inner) */
 static const int floatmaxw          = 1310;     /* i3: floating_maximum_size 1310x710 */
@@ -27,7 +28,7 @@ static const char col_selfg[]       = "#000000";
 static const char col_emptyfg[]     = "#A8A8A8"; /* empty tag */
 static const char col_occfg[]       = "#3A3A3A"; /* occupied tag */
 static const char col_taskfg[]      = "#555555"; /* unfocused task */
-static const char col_iconfg[]      = "#767676"; /* task icon */
+static const char col_iconfg[]      = "#767676"; /* +N overflow chip */
 static const char col_sep[]         = "#B0B0B0"; /* separator "|" */
 static const char col_accent[]      = "#FF8C00"; /* orange, 1px borders and focus outline */
 static const char col_urgbg[]       = "#AAAAAA";
@@ -46,8 +47,6 @@ static const char *colors[][3]      = {
 	[SchemeTaskSel]   = { col_selfg,   col_selbg,  col_focbw   },
 	[SchemeTaskUrg]   = { col_selfg,   col_urgbg,  col_urgbg   },
 	[SchemeIcon]      = { col_iconfg,  col_bg,     col_unfocbw },
-	[SchemeIconSel]   = { col_iconfg,  col_selbg,  col_focbw   },
-	[SchemeIconUrg]   = { col_iconfg,  col_urgbg,  col_urgbg   },
 	[SchemeDot]       = { col_selfg,   col_bg,     col_bg      },
 };
 
@@ -84,46 +83,6 @@ static const Layout layouts[] = {
 	{ "><>",      NULL },    /* floating */
 };
 
-/* taskbar icons (ported from ~/.config/polybar/scripts/taskbar.json) */
-typedef struct {
-	const char *pattern;
-	const char *glyph;
-} IconRule;
-
-static const IconRule iconrules[] = {
-	{ "(alacritty|kitty|termite|wezterm|st-|urxvt|xterm|tilix|gnome-terminal|xfd4-terminal)", "\uf120" },
-	{ "(brave|chrome|chromium|vivaldi|opera|edge)", "\uf268" },
-	{ "(firefox|librewolf|waterfox|tor-browser|tor browser)", "\uf269" },
-	{ "(code|codium|vscode|code-oss|code - oss)", "\ue70c" },
-	{ "(idea|pycharm|webstorm|clion|goland|rider|phpstorm|datagrip|rubymine|android-studio|jetbrains)", "\uf121" },
-	{ "(sublime|gedit|kate|mousepad|leafpad|notepad|neovim|nvim|vim|emacs)", "\uf044" },
-	{ "(ida|idaso|ghidra|radare|rizin|binaryninja|binary ninja|x64dbg|hopper|objdump)", "\uf188" },
-	{ "(python|idle|jupyter|ipython)", "\ue73c" },
-	{ "(pcmanfm|thunar|nautilus|nemo|dolphin|caja|file-roller|file-?manager|ark|engrampa|xarchiver)", "\uf07b" },
-	{ "(mpv|vlc|mplayer|celluloid|totem|smplayer|parole)", "\uf008" },
-	{ "(spotify|rhythmbox|audacious|deadbeef|mpd|cmus|elisa|strawberry)", "\uf001" },
-	{ "(discord|slack|telegram|whatsapp|signal|element|weechat|irssi|hexchat|thunderbird|evolution|geary|betterbird)", "\uf086" },
-	{ "(obsidian|joplin|logseq|notion|zettlr|typora|qownnotes)", "\uf0217" },
-	{ "(libreoffice|soffice|writer|calc|impress|onlyoffice|wps|gnumeric|abiword)", "\uf1c2" },
-	{ "(gimp|krita|inkscape|eog|feh|nsxiv|sxiv|gthumb|shotwell|pix|ristretto)", "\uf03e" },
-	{ "(zathura|evince|okular|mupdf|qpdfview|atril|xpdf)", "\uf1c1" },
-	{ "(docker|podman|lazydocker)", "\uf308" },
-	{ "(gitkraken|gitg|giggle|meld|git-cola)", "\uf1d3" },
-	{ "(steam|lutris|heroic|wine|retroarch|bottles)", "\uf1b6" },
-	{ "(virt-manager|qemu|virtualbox|vmware|gnome-boxes|looking-glass)", "\uf109" },
-	{ "(pavucontrol|alsamixer|qpwgraph|helvum)", "\uf028" },
-	{ "(blueman|bluetooth)", "\uf293" },
-	{ "(nm-connection-editor|wpa_gui|network)", "\uf1eb" },
-	{ "(gnome-control-center|xfce4-settings|lxappearance|arandr|systemsettings|settings)", "\uf013" },
-	{ "(gparted|gnome-disks|gdu|baobab|galculator|qalculate|kcalc)", "\uf0a0" },
-	{ "(obs-studio|obs|kazam|flameshot|spectacle|scrot|simplescreenrecorder)", "\uf030" },
-	{ "(postman|insomnia|soapui|bruno)", "\uf0ac" },
-	{ "(libreoffice-draw|draw|figma|penpot)", "\uf1fc" },
-	{ "(spreadsheet|excel|scalc)", "\uf1c3" },
-	{ "(zoom|teams|skype|remmina|anydesk|rustdesk|vnc|rdesktop)", "\uf03d" },
-	{ "(xmessage|xclock|xeyes|xlogo|xterm)", "\uf2d0" },
-};
-static const char *fallbackicon = "\uf2d0";
 
 /* key definitions */
 #define MODKEY Mod4Mask

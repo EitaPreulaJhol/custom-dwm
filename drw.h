@@ -1,5 +1,7 @@
 /* See LICENSE file for copyright and license details. */
 
+#include <stdint.h>
+
 typedef struct {
 	Cursor cursor;
 } Cur;
@@ -15,6 +17,8 @@ typedef struct Fnt {
 enum { ColFg, ColBg, ColBorder }; /* Clr scheme index */
 typedef XftColor Clr;
 
+#define ICONSIZE 16
+
 typedef struct {
 	unsigned int w, h;
 	Display *dpy;
@@ -22,6 +26,7 @@ typedef struct {
 	Window root;
 	Drawable drawable;
 	GC gc;
+	XImage *iconimg;
 	Clr *scheme;
 	Fnt *fonts;
 } Drw;
@@ -54,6 +59,7 @@ void drw_setscheme(Drw *drw, Clr *scm);
 
 /* Drawing functions */
 void drw_rect(Drw *drw, int x, int y, unsigned int w, unsigned int h, int filled, int invert);
+void drw_icon(Drw *drw, int x, int y, const uint32_t *argb, Clr *bg);
 int drw_text(Drw *drw, int x, int y, unsigned int w, unsigned int h, unsigned int lpad, const char *text, int invert);
 
 /* Map functions */
