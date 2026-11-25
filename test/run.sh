@@ -325,7 +325,7 @@ fi
 LAUNCHER_PID=
 if [ "${TEST_LAUNCHER:-0}" = 1 ]; then
 	printf 'firefox\nterminal\nfiles\neditor\nsettings\n' | \
-		i3-launcher --dmenu --no-icons >/tmp/launcher.log 2>&1 &
+		launcher-rs --dmenu --no-icons >/tmp/launcher.log 2>&1 &
 	LAUNCHER_PID=$!
 	sleep 1
 	xdotool type --delay 80 'fi'

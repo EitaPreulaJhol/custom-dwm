@@ -102,7 +102,7 @@ static const char *dmenucmd[] = { "dmenu_run", "-m", dmenumon, "-fn", dmenufont,
 static const char *termcmd[]  = { "st", NULL };
 static const char *filecmd[]  = { "pcmanfm", NULL };
 static const char *shotcmd[]  = { "flameshot", "gui", NULL };
-static const char *launchercmd[] = { "i3-launcher", NULL };
+static const char *launchercmd[] = { "launcher-rs", NULL };
 static const char *restartcmd[] = { "dwm-restart", NULL };
 static const char *exitcmd[]  = { "dwm-exit", NULL };
 static const char *calendarcmd[] = { "/bin/sh", "-c",
@@ -118,7 +118,7 @@ static const Key keys[] = {
 	{ MODKEY|ShiftMask,             XK_s,      spawn,          {.v = shotcmd } },
 	/* i3: $mod+q kill */
 	{ MODKEY,                       XK_q,      killclient,     {0} },
-	/* i3: $mod+d exec i3-launcher */
+	/* i3: $mod+d exec launcher-rs */
 	{ MODKEY,                       XK_d,      spawn,          {.v = launchercmd } },
 	/* i3: $mod+arrows focus left/down/up/right */
 	{ MODKEY,                       XK_Left,   focusdir,       {.i = DirLeft } },
