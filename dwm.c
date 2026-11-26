@@ -149,7 +149,7 @@ struct Monitor {
 	int mx, my, mw, mh;   /* screen size */
 	int wx, wy, ww, wh;   /* window area  */
 	unsigned int seltags;
-	unsigned int sellt;
+	unsigned int *sellt;   /* active layout slot per tag */
 	unsigned int tagset[2];
 	int showbar;
 	int topbar;
@@ -158,7 +158,7 @@ struct Monitor {
 	Client *stack;
 	Monitor *next;
 	Window barwin;
-	const Layout *lt[2];
+	const Layout **lt;     /* two remembered layouts per tag: lt[tag * 2 + slot] */
 	/* bar hit-testing caches, filled by drawbar() */
 	int tagx[33];
 	int statusx;
@@ -205,6 +205,8 @@ static void configure(Client *c);
 static void configurenotify(XEvent *e);
 static void configurerequest(XEvent *e);
 static Monitor *createmon(void);
+static const Layout *curlayout(Monitor *m);
+static unsigned int curtag(Monitor *m);
 static void destroynotify(XEvent *e);
 static void detach(Client *c);
 static void detachstack(Client *c);
@@ -457,7 +459,7 @@ applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
 			*y = m->wy;
 	}
 
-	if (resizehints || c->isfloating || !m->lt[m->sellt]->arrange) {
+	if (resizehints || c->isfloating || !curlayout(m)->arrange) {
 		if (!c->hintsvalid)
 			updatesizehints(c);
 		/* see last two sentences in ICCCM 4.1.2.3 */
@@ -505,11 +507,11 @@ void
 arrange(Monitor *m)
 {
 	if (m) {
-		if (m->lt[m->sellt]->arrange == tabbed)
+		if (curlayout(m)->arrange == tabbed)
 			tabselect(m);
 		showhide(m->stack);
 	} else for (m = mons; m; m = m->next) {
-		if (m->lt[m->sellt]->arrange == tabbed)
+		if (curlayout(m)->arrange == tabbed)
 			tabselect(m);
 		showhide(m->stack);
 	}
@@ -524,9 +526,9 @@ arrange(Monitor *m)
 void
 arrangemon(Monitor *m)
 {
-	snprintf(m->ltsymbol, sizeof(m->ltsymbol), "%s", m->lt[m->sellt]->symbol);
-	if (m->lt[m->sellt]->arrange)
-		m->lt[m->sellt]->arrange(m);
+	snprintf(m->ltsymbol, sizeof(m->ltsymbol), "%s", curlayout(m)->symbol);
+	if (curlayout(m)->arrange)
+		curlayout(m)->arrange(m);
 }
 
 void
@@ -581,7 +583,7 @@ buttonpress(XEvent *e)
 		focus(c);
 		restack(selmon);
 		if (ev->window == c->title) {
-			if (c->mon->lt[c->mon->sellt]->arrange == tabbed
+			if (curlayout(c->mon)->arrange == tabbed
 			&& c == c->mon->tabsel && !c->isfloating) {
 				for (i = 0; i < (unsigned int)c->mon->tabn; i++)
 					if (ev->x >= c->mon->tabx[i]
@@ -629,7 +631,8 @@ cleanup(void)
 	size_t i;
 
 	view(&a);
-	selmon->lt[selmon->sellt] = &foo;
+	for (i = 0; i < LENGTH(tags); i++)
+		selmon->lt[i * 2 + selmon->sellt[i]] = &foo;
 	for (m = mons; m; m = m->next)
 		while (m->stack)
 			unmanage(m->stack, 0);
@@ -674,6 +677,8 @@ cleanupmon(Monitor *mon)
 	}
 	XUnmapWindow(dpy, mon->barwin);
 	XDestroyWindow(dpy, mon->barwin);
+	free(mon->lt);
+	free(mon->sellt);
 	free(mon);
 }
 
@@ -806,7 +811,7 @@ configurerequest(XEvent *e)
 	if ((c = wintoclient(ev->window))) {
 		if (ev->window != c->win) {
 			/* request from our own frame/title; ignore */
-		} else if (c->isfloating || !c->mon->lt[c->mon->sellt]->arrange) {
+		} else if (c->isfloating || !curlayout(c->mon)->arrange) {
 			int th = c->isfullscreen ? 0 : titleheight;
 			int cw = c->w - 2 * c->bw;
 			int ch = c->h - 2 * c->bw - th;
@@ -839,6 +844,7 @@ Monitor *
 createmon(void)
 {
 	Monitor *m;
+	size_t i;
 
 	m = ecalloc(1, sizeof(Monitor));
 	m->tagset[0] = m->tagset[1] = 1;
@@ -846,10 +852,35 @@ createmon(void)
 	m->nmaster = nmaster;
 	m->showbar = showbar;
 	m->topbar = topbar;
-	m->lt[0] = &layouts[0];
-	m->lt[1] = &layouts[1 % LENGTH(layouts)];
+	m->lt = ecalloc(LENGTH(tags) * 2, sizeof *m->lt);
+	m->sellt = ecalloc(LENGTH(tags), sizeof *m->sellt);
+	for (i = 0; i < LENGTH(tags); i++) {
+		m->lt[i * 2] = &layouts[0];
+		m->lt[i * 2 + 1] = &layouts[1 % LENGTH(layouts)];
+	}
 	snprintf(m->ltsymbol, sizeof(m->ltsymbol), "%s", layouts[0].symbol);
 	return m;
+}
+
+/* Layouts are remembered per tag so each workspace keeps its own. When
+ * several tags are visible the first one owns the monitor's layout. */
+const Layout *
+curlayout(Monitor *m)
+{
+	unsigned int t = curtag(m);
+
+	return m->lt[t * 2 + m->sellt[t]];
+}
+
+unsigned int
+curtag(Monitor *m)
+{
+	unsigned int i, tagset = m->tagset[m->seltags];
+
+	for (i = 0; i < LENGTH(tags); i++)
+		if (tagset & (1u << i))
+			return i;
+	return 0;
 }
 
 void
@@ -1209,7 +1240,7 @@ drawtitle(Client *c, int focused)
 	tw = c->w - 2 * c->bw;
 	if (tw <= 0)
 		return;
-	istabbed = c->mon->lt[c->mon->sellt]->arrange == tabbed;
+	istabbed = curlayout(c->mon)->arrange == tabbed;
 
 	if (istabbed && c == c->mon->tabsel && !c->isfloating) {
 		for (t = nexttiled(c->mon->clients); t && n < (int)LENGTH(list);
@@ -1313,7 +1344,7 @@ drawclienttitles(Client *c)
 {
 	Client *t = c;
 
-	if (c->mon->lt[c->mon->sellt]->arrange == tabbed && !c->isfloating
+	if (curlayout(c->mon)->arrange == tabbed && !c->isfloating
 	&& c->mon->tabsel)
 		t = c->mon->tabsel;
 	drawtitle(t, t == c->mon->sel);
@@ -1568,7 +1599,7 @@ focus(Client *c)
 		XSetWindowBorder(dpy, c->frame, scheme[c->isurgent ? SchemeUrg
 			: SchemeSel][ColBorder].pixel);
 		selmon->sel = c;
-		if (c->mon->lt[c->mon->sellt]->arrange == tabbed) {
+		if (curlayout(c->mon)->arrange == tabbed) {
 			if (!c->isfloating)
 				c->mon->tabsel = c;
 			/* Map the selected tab before giving it the keyboard. */
@@ -1599,7 +1630,7 @@ focusdir(const Arg *arg)
 	 * so geometry cannot choose a neighbour. Left/right cycles the visible
 	 * tiling order instead, i.e. the tabs. */
 	if (arg->i == DirLeft || arg->i == DirRight) {
-		const Layout *l = selmon->lt[selmon->sellt];
+		const Layout *l = curlayout(selmon);
 
 		if (l->arrange == tabbed || l->arrange == monocle) {
 			Client *list[64];
@@ -2079,7 +2110,7 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 	/* A window that does not tile opens centered, whatever position it asked
 	 * for. scan() adopts already placed clients on restart: leave them. */
 	if (!adopt && !c->isfullscreen
-	&& (c->isfloating || !c->mon->lt[c->mon->sellt]->arrange))
+	&& (c->isfloating || !curlayout(c->mon)->arrange))
 		centerclient(c);
 	if (c->isfloating)
 		XRaiseWindow(dpy, c->frame);
@@ -2139,7 +2170,7 @@ tabselect(Monitor *m)
 {
 	Client *c, *first = NULL;
 
-	if (!m || m->lt[m->sellt]->arrange != tabbed)
+	if (!m || curlayout(m)->arrange != tabbed)
 		return;
 	for (c = nexttiled(m->clients); c; c = nexttiled(c->next)) {
 		if (!first)
@@ -2315,14 +2346,14 @@ movemouse(const Arg *arg)
 				ny = selmon->wy;
 			else if (abs((selmon->wy + selmon->wh) - (ny + HEIGHT(c))) < snap)
 				ny = selmon->wy + selmon->wh - HEIGHT(c);
-			if (!c->isfloating && selmon->lt[selmon->sellt]->arrange
+			if (!c->isfloating && curlayout(selmon)->arrange
 			&& (abs(nx - c->x) > snap || abs(ny - c->y) > snap)) {
 				/* Drag-to-float keeps the current cell; the explicit
 				 * Mod+Space toggle is what restores natural size. */
 				c->isfloating = 1;
 				arrange(selmon);
 			}
-			if (!selmon->lt[selmon->sellt]->arrange || c->isfloating)
+			if (!curlayout(selmon)->arrange || c->isfloating)
 				resize(c, nx, ny, c->w, c->h, 1);
 			break;
 		}
@@ -2433,7 +2464,7 @@ outlinetabrect(Client *c, XRectangle *tab)
 	int n = 0, i, idx = -1, tw, cellw, tx, twi;
 
 	if (!m || !c->title || c->isfullscreen || c->isfloating
-	|| titleheight <= 0 || m->lt[m->sellt]->arrange != tabbed)
+	|| titleheight <= 0 || curlayout(m)->arrange != tabbed)
 		return 0;
 	tw = c->w - 2 * c->bw;
 	if (tw <= 0)
@@ -2873,14 +2904,14 @@ resizemouse(const Arg *arg)
 					ny = ocy + och - (2 * c->bw + titleheight + 1);
 				nh = 2 * c->bw + titleheight + 1;
 			}
-			if (!c->isfloating && c->mon->lt[c->mon->sellt]->arrange
+			if (!c->isfloating && curlayout(c->mon)->arrange
 			&& (abs(nw - c->w) > snap || abs(nh - c->h) > snap)) {
 				/* Drag-to-float keeps the current cell; the explicit
 				 * Mod+Space toggle is what restores natural size. */
 				c->isfloating = 1;
 				arrange(c->mon);
 			}
-			if (!c->mon->lt[c->mon->sellt]->arrange || c->isfloating)
+			if (!curlayout(c->mon)->arrange || c->isfloating)
 				resize(c, nx, ny, nw, nh, 1);
 			break;
 		}
@@ -2908,7 +2939,7 @@ restack(Monitor *m)
 			XRaiseWindow(dpy, m->sel->frame);
 		} else {
 			/* Tiled group: directly below the bar, in stack order. */
-			if (m->lt[m->sellt]->arrange) {
+			if (curlayout(m)->arrange) {
 				wc.stack_mode = Below;
 				wc.sibling = m->barwin;
 				for (c = m->stack; c; c = c->snext)
@@ -2923,11 +2954,11 @@ restack(Monitor *m)
 			wc.sibling = m->barwin;
 			for (c = m->stack; c; c = c->snext)
 				if (c != m->sel && ISVISIBLE(c)
-				&& (!m->lt[m->sellt]->arrange || c->isfloating)) {
+				&& (!curlayout(m)->arrange || c->isfloating)) {
 					XConfigureWindow(dpy, c->frame, CWSibling|CWStackMode, &wc);
 					wc.sibling = c->frame;
 				}
-			if (!m->lt[m->sellt]->arrange || m->sel->isfloating) {
+			if (!curlayout(m)->arrange || m->sel->isfloating) {
 				wc.sibling = m->barwin;
 				wc.stack_mode = Below;
 				XConfigureWindow(dpy, m->sel->frame, CWSibling|CWStackMode, &wc);
@@ -3106,11 +3137,15 @@ setfullscreen(Client *c, int fullscreen)
 void
 setlayout(const Arg *arg)
 {
-	if (!arg || !arg->v || arg->v != selmon->lt[selmon->sellt])
-		selmon->sellt ^= 1;
+	unsigned int t = curtag(selmon);
+	unsigned int slot;
+
+	if (!arg || !arg->v || arg->v != selmon->lt[t * 2 + selmon->sellt[t]])
+		selmon->sellt[t] ^= 1;
+	slot = t * 2 + selmon->sellt[t];
 	if (arg && arg->v)
-		selmon->lt[selmon->sellt] = (Layout *)arg->v;
-	snprintf(selmon->ltsymbol, sizeof(selmon->ltsymbol), "%s", selmon->lt[selmon->sellt]->symbol);
+		selmon->lt[slot] = (Layout *)arg->v;
+	snprintf(selmon->ltsymbol, sizeof(selmon->ltsymbol), "%s", selmon->lt[slot]->symbol);
 	if (selmon->sel)
 		arrange(selmon);
 	else
@@ -3123,7 +3158,7 @@ setmfact(const Arg *arg)
 {
 	float f;
 
-	if (!arg || !selmon->lt[selmon->sellt]->arrange)
+	if (!arg || !curlayout(selmon)->arrange)
 		return;
 	f = arg->f < 1.0 ? arg->f + selmon->mfact : arg->f - 1.0;
 	if (f < 0.05 || f > 0.95)
@@ -3203,7 +3238,7 @@ modekey(XEvent *e, KeySym keysym)
 	if (wmmode == ModeResize) {
 		if (c->isfullscreen)
 			return 1;
-		if (c->isfloating || !c->mon->lt[c->mon->sellt]->arrange) {
+		if (c->isfloating || !curlayout(c->mon)->arrange) {
 			int x = c->x, y = c->y, w = c->w, h = c->h;
 
 			switch (keysym) {
@@ -3232,7 +3267,7 @@ modekey(XEvent *e, KeySym keysym)
 			return 1;
 		if (shift)
 			step = 50;
-		if (c->isfloating || !c->mon->lt[c->mon->sellt]->arrange) {
+		if (c->isfloating || !curlayout(c->mon)->arrange) {
 			int x = c->x, y = c->y;
 
 			switch (keysym) {
@@ -3370,7 +3405,7 @@ showhide(Client *c)
 
 	if (!c)
 		return;
-	tabs = c->mon->lt[c->mon->sellt]->arrange == tabbed;
+	tabs = curlayout(c->mon)->arrange == tabbed;
 	if (ISVISIBLE(c) && (!tabs || c->isfloating || c == c->mon->tabsel)) {
 		/* show clients top down */
 		XMoveResizeWindow(dpy, c->frame, c->x, c->y,
@@ -3385,7 +3420,7 @@ showhide(Client *c)
 			XClearArea(dpy, c->win, 0, 0, 0, 0, True);
 		}
 		drawtitle(c, c == selmon->sel);
-		if ((!c->mon->lt[c->mon->sellt]->arrange || c->isfloating) && !c->isfullscreen)
+		if ((!curlayout(c->mon)->arrange || c->isfloating) && !c->isfullscreen)
 			resize(c, c->x, c->y, c->w, c->h, 0);
 		showhide(c->snext);
 	} else {
@@ -3579,7 +3614,7 @@ togglefloating(const Arg *arg)
 		return;
 	selmon->sel->isfloating = !selmon->sel->isfloating || selmon->sel->isfixed;
 	if (selmon->sel->isfloating) {
-		if (selmon->lt[selmon->sellt]->arrange)
+		if (curlayout(selmon)->arrange)
 			floatnatural(selmon->sel);
 		else
 			resize(selmon->sel, selmon->sel->x, selmon->sel->y,
@@ -3600,7 +3635,7 @@ togglesplit(const Arg *arg)
 {
 	Arg a;
 
-	a.v = selmon->lt[selmon->sellt]->arrange == tile ? &layouts[1] : &layouts[0];
+	a.v = curlayout(selmon)->arrange == tile ? &layouts[1] : &layouts[0];
 	setlayout(&a);
 }
 
@@ -4181,7 +4216,7 @@ zoom(const Arg *arg)
 {
 	Client *c = selmon->sel;
 
-	if (!selmon->lt[selmon->sellt]->arrange || !c || c->isfloating)
+	if (!curlayout(selmon)->arrange || !c || c->isfloating)
 		return;
 	if (c == nexttiled(selmon->clients) && !(c = nexttiled(c->next)))
 		return;

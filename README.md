@@ -15,7 +15,9 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
   clock, 16px tray; taskbar items show real icons, titles, and an orange frame
   on the focused window.
 - **Layouts and gaps** - splith, splitv, monocle, tabbed, and floating, with
-  uniform 10px inner and outer gaps.
+  uniform 10px inner and outer gaps. Layouts are remembered per tag, so
+  switching modes on one workspace does not change the others (when several
+  tags are viewed together, the first one provides the layout).
 - **Floating windows** - any window that does not tile (floating rules,
   dialogs, transients, fixed-size prompts, the floating layout) always opens
   centered on its monitor, whatever position the client asked for. Clients
@@ -143,8 +145,9 @@ docker run --rm -e SHOW_TRAY=1 -v "$PWD":/src -v /tmp/dwm-out:/out \
 flags. `TEST_OUTLINE=1` (with `SHOW_CLIENTS=1`) checks the in-process focus
 outline: geometry around the focused frame, empty input shape, hiding in
 fullscreen, and the notched tabbed shape. `test/session.sh` covers
-restart/exit; `test/icons.sh`, `test/modes.sh`, and `test/fixed.sh` cover
-icons, binding modes, and fixed-size prompts.
+restart/exit; `test/icons.sh`, `test/modes.sh`, `test/fixed.sh`, and
+`test/taglayouts.sh` cover icons, binding modes, fixed-size prompts, and
+per-tag layouts.
 
 ## Files
 
