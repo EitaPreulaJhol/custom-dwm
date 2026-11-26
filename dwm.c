@@ -57,6 +57,8 @@
 #define HEIGHT(X)               ((X)->h)
 #define TAGMASK                 ((1 << LENGTH(tags)) - 1)
 #define TEXTW(X)                (drw_fontset_getwidth(drw, (X)) + lrpad)
+#define MFACT(M)                ((M)->mfacts[curtag(M)])
+#define NMASTER(M)              ((M)->nmasters[curtag(M)])
 
 #define SYSTEM_TRAY_REQUEST_DOCK    0
 /* XEMBED messages */
@@ -114,6 +116,7 @@ struct Client {
 	int natx, naty, natw, nath; /* geometry requested when mapped */
 	int basew, baseh, incw, inch, maxw, maxh, minw, minh, hintsvalid;
 	int bw, oldbw;
+	float cfact; /* share of its column/row in the tiling layouts */
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
 	int mapped; /* frame currently mapped by showhide() */
@@ -144,8 +147,8 @@ typedef struct {
 
 struct Monitor {
 	char ltsymbol[16];
-	float mfact;
-	int nmaster;
+	float *mfacts;         /* per tag */
+	int *nmasters;         /* per tag */
 	int num;
 	int by;               /* bar geometry */
 	int mx, my, mw, mh;   /* screen size */
@@ -252,6 +255,8 @@ static void monocle(Monitor *m);
 static void motionnotify(XEvent *e);
 static void movedir(const Arg *arg);
 static void movemouse(const Arg *arg);
+static void dragmove(Client *c);
+static void swapclients(Monitor *m, Client *a, Client *b);
 static Client *nexttiled(Client *c);
 static int outlineadd(XRectangle *rects, int n, int max, int x, int y, int w, int h);
 static void outlinecreate(void);
@@ -706,6 +711,8 @@ cleanupmon(Monitor *mon)
 	XDestroyWindow(dpy, mon->barwin);
 	free(mon->lt);
 	free(mon->sellt);
+	free(mon->mfacts);
+	free(mon->nmasters);
 	free(mon->taskx);
 	free(mon->taskclients);
 	free(mon->tabclients);
@@ -887,13 +894,15 @@ createmon(void)
 
 	m = ecalloc(1, sizeof(Monitor));
 	m->tagset[0] = m->tagset[1] = 1;
-	m->mfact = mfact;
-	m->nmaster = nmaster;
 	m->showbar = showbar;
 	m->topbar = topbar;
 	m->lt = ecalloc(LENGTH(tags) * 2, sizeof *m->lt);
 	m->sellt = ecalloc(LENGTH(tags), sizeof *m->sellt);
+	m->mfacts = ecalloc(LENGTH(tags), sizeof *m->mfacts);
+	m->nmasters = ecalloc(LENGTH(tags), sizeof *m->nmasters);
 	for (i = 0; i < LENGTH(tags); i++) {
+		m->mfacts[i] = mfact;
+		m->nmasters[i] = nmaster;
 		m->lt[i * 2] = &layouts[0];
 		m->lt[i * 2 + 1] = &layouts[1 % LENGTH(layouts)];
 	}
@@ -2020,7 +2029,7 @@ grabkeys(void)
 void
 incnmaster(const Arg *arg)
 {
-	selmon->nmaster = MAX(selmon->nmaster + arg->i, 0);
+	NMASTER(selmon) = MAX(NMASTER(selmon) + arg->i, 0);
 	arrange(selmon);
 }
 
@@ -2081,6 +2090,7 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 
 	c = ecalloc(1, sizeof(Client));
 	c->win = w;
+	c->cfact = 1.0;
 	c->taskcap = -1;
 	c->oldbw = wa->border_width;
 	c->bw = borderpx;
@@ -2270,7 +2280,7 @@ motionnotify(XEvent *e)
 }
 
 /* Swap two nodes in the tiling order list. */
-static void
+void
 swapclients(Monitor *m, Client *a, Client *b)
 {
 	Client **pa, **pb, *anext, *bnext;
@@ -2340,27 +2350,59 @@ titleclick(const Arg *arg)
 		movemouse(arg);
 }
 
-void
-movemouse(const Arg *arg)
+/* Wait for the drag's ButtonRelease; false when no button is held any more
+ * (a _NET_WM_MOVERESIZE that arrived after a quick click). */
+static int
+buttonheld(void)
 {
-	int x, y, ocx, ocy, nx, ny;
-	Client *c;
+	int di;
+	unsigned int mask;
+	Window dummy;
+
+	if (!XQueryPointer(dpy, root, &dummy, &dummy, &di, &di, &di, &di, &mask))
+		return 0;
+	return (mask & (Button1Mask|Button2Mask|Button3Mask|Button4Mask|Button5Mask)) != 0;
+}
+
+/* Tiled client under the root position x,y on m, other than c. */
+static Client *
+tiledat(Monitor *m, Client *c, int x, int y)
+{
+	Client *t;
+
+	for (t = nexttiled(m->clients); t; t = nexttiled(t->next))
+		if (t != c && x >= t->x && x < t->x + t->w && y >= t->y && y < t->y + t->h)
+			return t;
+	return NULL;
+}
+
+/* Drag c with the pointer. A floating window (or any window in the floating
+ * layout) follows the pointer; a tiled one stays tiled and, on release,
+ * swaps places with the tiled window under the pointer, or moves to the
+ * monitor under it (i3 drag-to-reposition). The focus outline follows the
+ * drop target while dragging. */
+void
+dragmove(Client *c)
+{
+	int x, y, ocx, ocy, nx, ny, tiled;
+	Client *t;
 	Monitor *m;
 	XEvent ev;
 	Time lasttime = 0;
 
-	if (!(c = selmon->sel))
-		return;
-	if (c->isfullscreen) /* no support moving fullscreen windows by mouse */
+	if (!c || c->isfullscreen) /* no support moving fullscreen windows by mouse */
 		return;
 	restack(selmon);
 	ocx = c->x;
 	ocy = c->y;
+	tiled = !c->isfloating && curlayout(c->mon)->arrange;
 	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
 		None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
 		return;
-	if (!getrootptr(&x, &y))
+	if (!getrootptr(&x, &y) || !buttonheld()) {
+		XUngrabPointer(dpy, CurrentTime);
 		return;
+	}
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
 		switch(ev.type) {
@@ -2373,6 +2415,8 @@ movemouse(const Arg *arg)
 			if ((ev.xmotion.time - lasttime) <= (1000 / refreshrate))
 				continue;
 			lasttime = ev.xmotion.time;
+			if (tiled)
+				break;
 
 			nx = ocx + (ev.xmotion.x - x);
 			ny = ocy + (ev.xmotion.y - y);
@@ -2384,24 +2428,37 @@ movemouse(const Arg *arg)
 				ny = selmon->wy;
 			else if (abs((selmon->wy + selmon->wh) - (ny + HEIGHT(c))) < snap)
 				ny = selmon->wy + selmon->wh - HEIGHT(c);
-			if (!c->isfloating && curlayout(selmon)->arrange
-			&& (abs(nx - c->x) > snap || abs(ny - c->y) > snap)) {
-				/* Drag-to-float keeps the current cell; the explicit
-				 * Mod+Space toggle is what restores natural size. */
-				c->isfloating = 1;
-				arrange(selmon);
-			}
-			if (!curlayout(selmon)->arrange || c->isfloating)
-				resize(c, nx, ny, c->w, c->h, 1);
+			resize(c, nx, ny, c->w, c->h, 1);
 			break;
 		}
 	} while (ev.type != ButtonRelease);
 	XUngrabPointer(dpy, CurrentTime);
+	if (tiled) {
+		x = ev.xbutton.x_root;
+		y = ev.xbutton.y_root;
+		m = recttomon(x, y, 1, 1);
+		if (m != c->mon) {
+			sendmon(c, m);
+			selmon = m;
+			focus(c);
+			restack(m);
+		} else if ((t = tiledat(m, c, x, y))) {
+			swapclients(m, c, t);
+			arrange(m);
+		}
+		return;
+	}
 	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
 		sendmon(c, m);
 		selmon = m;
 		focus(NULL);
 	}
+}
+
+void
+movemouse(const Arg *arg)
+{
+	dragmove(selmon->sel);
 }
 
 Client *
@@ -3193,10 +3250,10 @@ setmfact(const Arg *arg)
 
 	if (!arg || !curlayout(selmon)->arrange)
 		return;
-	f = arg->f < 1.0 ? arg->f + selmon->mfact : arg->f - 1.0;
+	f = arg->f < 1.0 ? arg->f + MFACT(selmon) : arg->f - 1.0;
 	if (f < 0.05 || f > 0.95)
 		return;
-	selmon->mfact = f;
+	MFACT(selmon) = f;
 	arrange(selmon);
 }
 
@@ -3249,6 +3306,53 @@ grabmodekeys(int grab)
 	XSync(dpy, False);
 }
 
+/* i3's "resize grow/shrink width/height" for a tiled window. The axis that
+ * crosses the master/stack split moves the split (mfact, from the side of
+ * the focused window); the other axis changes the window's share of its
+ * column or row (cfact) by the same 2 percentage points. */
+static void
+resizetiled(Client *c, int dw, int dh)
+{
+	Monitor *m = c->mon;
+	void (*ar)(Monitor *) = curlayout(m)->arrange;
+	unsigned int n = 0, idx = 0, nm, first, count;
+	int splitdir, sharedir;
+	float total = 0, share, rest;
+	Client *t;
+	Arg a;
+
+	if (ar != tile && ar != tilev)
+		return;
+	for (t = nexttiled(m->clients); t; t = nexttiled(t->next), n++)
+		if (t == c)
+			idx = n;
+	nm = MIN(n, (unsigned int)NMASTER(m));
+	splitdir = ar == tile ? dw : dh;
+	sharedir = ar == tile ? dh : dw;
+
+	if (splitdir) {
+		if (!nm || nm == n)
+			return;
+		a.f = (idx < nm ? 0.02f : -0.02f) * splitdir;
+		setmfact(&a);
+		return;
+	}
+	if (!sharedir)
+		return;
+	first = idx < nm ? 0 : nm;
+	count = idx < nm ? nm : n - nm;
+	if (count < 2)
+		return;
+	for (n = 0, t = nexttiled(m->clients); t; t = nexttiled(t->next), n++)
+		if (n >= first && n < first + count)
+			total += t->cfact;
+	rest = total - c->cfact;
+	share = c->cfact / total + 0.02f * sharedir;
+	share = MAX(0.05f, MIN(0.95f, share));
+	c->cfact = MAX(0.05f, MIN(20.0f, share * rest / (1 - share)));
+	arrange(m);
+}
+
 int
 modekey(XEvent *e, KeySym keysym)
 {
@@ -3282,12 +3386,18 @@ modekey(XEvent *e, KeySym keysym)
 			default: return 1;
 			}
 			resize(c, x, y, w, h, 1);
+		} else if (shift && (keysym == XK_Up || keysym == XK_l)) {
+			a.i = -1;
+			incnmaster(&a);
+		} else if (shift && (keysym == XK_Down || keysym == XK_k)) {
+			a.i = 1;
+			incnmaster(&a);
 		} else {
 			switch (keysym) {
-			case XK_Left:  case XK_j: a.f = -0.02f; setmfact(&a); break;
-			case XK_Right: case XK_semicolon: a.f = 0.02f; setmfact(&a); break;
-			case XK_Up:    case XK_l: a.i = -1; incnmaster(&a); break;
-			case XK_Down:  case XK_k: a.i = 1;  incnmaster(&a); break;
+			case XK_Left:  case XK_j: resizetiled(c, -1, 0); break;
+			case XK_Right: case XK_semicolon: resizetiled(c, 1, 0); break;
+			case XK_Up:    case XK_l: resizetiled(c, 0, -1); break;
+			case XK_Down:  case XK_k: resizetiled(c, 0, 1); break;
 			default: return 1;
 			}
 		}
@@ -3523,96 +3633,98 @@ place(Client *c, int x, int y, int w, int h)
 	resize(c, x, y, w, h, 0);
 }
 
-/* splith: master column left, stack right. gaps inner 10px, outer 0. */
+/* Place `k` tiled clients starting at c inside x,y,w,h: side by side when
+ * `horiz`, stacked otherwise. Each one gets a share of the length that is
+ * proportional to its cfact; the last one takes the rounding remainder so
+ * the gaps stay exact. Returns the first client after them. */
+static Client *
+splitarea(Client *c, unsigned int k, int x, int y, int w, int h, int horiz)
+{
+	unsigned int i;
+	float total = 0;
+	Client *t;
+	int pos, end, sz, avail;
+
+	if (!k)
+		return c;
+	for (i = 0, t = c; t && i < k; t = nexttiled(t->next), i++)
+		total += t->cfact;
+	if (total <= 0)
+		total = 1;
+	avail = (horiz ? w : h) - (int)(k - 1) * gappx;
+	pos = horiz ? x : y;
+	end = horiz ? x + w : y + h;
+	for (i = 0; c && i < k; c = nexttiled(c->next), i++) {
+		sz = (i == k - 1) ? end - pos : (int)(avail * c->cfact / total);
+		if (horiz)
+			place(c, pos, y, sz, h);
+		else
+			place(c, x, pos, w, sz);
+		pos += sz + gappx;
+	}
+	return c;
+}
+
+/* splith: master column left, stack right. */
 void
 tile(Monitor *m)
 {
-	unsigned int i, n, nm, ns;
-	int g = gappx, half = g / 2, mw = 0, sx, sw, y, h, avail;
+	unsigned int n, nm, ns;
+	int half = gappx / 2, mw = 0, sx, stw;
 	int wx = m->wx + gappo, wy = m->wy + gappo;
 	int ww = m->ww - 2 * gappo, wh = m->wh - 2 * gappo;
+	float f = MFACT(m);
 	Client *c;
 
 	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++);
 	if (n == 0 || ww < 1 || wh < 1)
 		return;
-	nm = MIN(n, (unsigned int)m->nmaster);
+	nm = MIN(n, (unsigned int)NMASTER(m));
 	ns = n - nm;
 
 	if (nm && ns) {
-		mw = (int)(ww * m->mfact) - half;
-		sx = wx + (int)(ww * m->mfact) + half;
-		sw = ww - (int)(ww * m->mfact) - half;
+		mw = (int)(ww * f) - half;
+		sx = wx + (int)(ww * f) + half;
+		stw = ww - (int)(ww * f) - half;
 	} else {
 		sx = wx;
-		sw = ww;
+		stw = ww;
 		if (nm)
 			mw = ww;
 	}
-
-	i = 0;
-	y = wy;
-	avail = wh - (nm > 1 ? (int)(nm - 1) * g : 0);
-	for (c = nexttiled(m->clients); c && i < nm; c = nexttiled(c->next), i++) {
-		h = (i == nm - 1) ? (wy + wh - y) : avail / (int)nm;
-		place(c, wx, y, mw, h);
-		y += h + g;
-	}
-
-	i = 0;
-	y = wy;
-	avail = wh - (ns > 1 ? (int)(ns - 1) * g : 0);
-	for (; c; c = nexttiled(c->next), i++) {
-		h = (i == ns - 1) ? (wy + wh - y) : avail / (int)ns;
-		place(c, sx, y, sw, h);
-		y += h + g;
-	}
+	c = splitarea(nexttiled(m->clients), nm, wx, wy, mw, wh, 0);
+	splitarea(c, ns, sx, wy, stw, wh, 0);
 }
 
 /* splitv: master row on top, stack below. */
 void
 tilev(Monitor *m)
 {
-	unsigned int i, n, nm, ns;
-	int g = gappx, half = g / 2, mh = 0, sy, sh, x, w, avail;
+	unsigned int n, nm, ns;
+	int half = gappx / 2, mh = 0, sy, sth;
 	int wx = m->wx + gappo, wy = m->wy + gappo;
 	int ww = m->ww - 2 * gappo, wh = m->wh - 2 * gappo;
+	float f = MFACT(m);
 	Client *c;
 
 	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++);
 	if (n == 0 || ww < 1 || wh < 1)
 		return;
-	nm = MIN(n, (unsigned int)m->nmaster);
+	nm = MIN(n, (unsigned int)NMASTER(m));
 	ns = n - nm;
 
 	if (nm && ns) {
-		mh = (int)(wh * m->mfact) - half;
-		sy = wy + (int)(wh * m->mfact) + half;
-		sh = wh - (int)(wh * m->mfact) - half;
+		mh = (int)(wh * f) - half;
+		sy = wy + (int)(wh * f) + half;
+		sth = wh - (int)(wh * f) - half;
 	} else {
 		sy = wy;
-		sh = wh;
+		sth = wh;
 		if (nm)
 			mh = wh;
 	}
-
-	i = 0;
-	x = wx;
-	avail = ww - (nm > 1 ? (int)(nm - 1) * g : 0);
-	for (c = nexttiled(m->clients); c && i < nm; c = nexttiled(c->next), i++) {
-		w = (i == nm - 1) ? (wx + ww - x) : avail / (int)nm;
-		place(c, x, wy, w, mh);
-		x += w + g;
-	}
-
-	i = 0;
-	x = wx;
-	avail = ww - (ns > 1 ? (int)(ns - 1) * g : 0);
-	for (; c; c = nexttiled(c->next), i++) {
-		w = (i == ns - 1) ? (wx + ww - x) : avail / (int)ns;
-		place(c, x, sy, w, sh);
-		x += w + g;
-	}
+	c = splitarea(nexttiled(m->clients), nm, wx, wy, ww, mh, 1);
+	splitarea(c, ns, wx, sy, ww, sth, 1);
 }
 
 void
@@ -4147,8 +4259,17 @@ updatewmhints(Client *c)
 void
 view(const Arg *arg)
 {
-	if ((arg->ui & TAGMASK) == selmon->tagset[selmon->seltags])
+	if ((arg->ui & TAGMASK) == selmon->tagset[selmon->seltags]) {
+		/* i3 workspace_auto_back_and_forth: selecting the current tag
+		 * again goes back to the previous one, like Mod+Tab. */
+		if (!autobackandforth || !(arg->ui & TAGMASK)
+		|| selmon->tagset[selmon->seltags ^ 1] == selmon->tagset[selmon->seltags])
+			return;
+		selmon->seltags ^= 1;
+		focus(NULL);
+		arrange(selmon);
 		return;
+	}
 	selmon->seltags ^= 1; /* toggle sel tagset */
 	if (arg->ui & TAGMASK)
 		selmon->tagset[selmon->seltags] = arg->ui & TAGMASK;
