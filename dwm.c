@@ -28,7 +28,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -125,7 +124,6 @@ struct Client {
 	Window win;
 	Window frame;
 	Window title;
-	long unmap_ignore_until; /* monotonic ms, reparent race grace */
 };
 
 typedef struct {
@@ -745,7 +743,14 @@ clientmessage(XEvent *e)
 			setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD    */
 				|| (cme->data.l[0] == 2 /* _NET_WM_STATE_TOGGLE */ && !c->isfullscreen)));
 	} else if (cme->message_type == netatom[NetActiveWindow]) {
-		if (c != selmon->sel && !c->isurgent)
+		/* i3's focus_on_window_activation smart: focus a window that is
+		 * on a visible tag, mark any other one urgent. */
+		if (c == selmon->sel)
+			return;
+		if (ISVISIBLE(c)) {
+			focus(c);
+			restack(c->mon);
+		} else if (!c->isurgent)
 			seturgent(c, 1);
 	}
 }
@@ -1599,12 +1604,14 @@ focus(Client *c)
 		XSetWindowBorder(dpy, c->frame, scheme[c->isurgent ? SchemeUrg
 			: SchemeSel][ColBorder].pixel);
 		selmon->sel = c;
-		if (curlayout(c->mon)->arrange == tabbed) {
-			if (!c->isfloating)
-				c->mon->tabsel = c;
-			/* Map the selected tab before giving it the keyboard. */
+		if (curlayout(c->mon)->arrange == tabbed && !c->isfloating)
+			c->mon->tabsel = c;
+		/* XSetInputFocus fails with BadMatch on a window that is not
+		 * viewable, and hidden clients have their frame unmapped (another
+		 * tag, another tab). Map it before giving it the keyboard, or the
+		 * focus falls back to PointerRoot once the old frame is hidden. */
+		if (!c->mapped || curlayout(c->mon)->arrange == tabbed)
 			arrange(c->mon);
-		}
 		setfocus(c);
 	} else {
 		selmon->sel = NULL;
@@ -2023,22 +2030,12 @@ killclient(const Arg *arg)
 	}
 }
 
-static long
-nowms(void)
-{
-	struct timespec ts;
-
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return (long)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
-}
-
 void
 manage(Window w, XWindowAttributes *wa, int adopt)
 {
 	Client *c, *t = NULL;
 	Window trans = None;
 	XSetWindowAttributes fwa, twa;
-	XEvent uev;
 	int th = titleheight;
 
 	c = ecalloc(1, sizeof(Client));
@@ -2112,6 +2109,10 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 	if (!adopt && !c->isfullscreen
 	&& (c->isfloating || !curlayout(c->mon)->arrange))
 		centerclient(c);
+	/* Clients that map already fullscreen (players, games): the frame
+	 * exists now, so setfullscreen() can cover the monitor. */
+	if (getatomprop(c, netatom[NetWMState]) == netatom[NetWMFullscreen])
+		setfullscreen(c, 1);
 	if (c->isfloating)
 		XRaiseWindow(dpy, c->frame);
 
@@ -2125,12 +2126,8 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 	c->mon->sel = c;
 
 	XMapWindow(dpy, c->win);
-	XMapWindow(dpy, c->title);
-	/* XReparentWindow unmaps the client; consume that UnmapNotify so
-	 * unmapnotify() does not unmanage a freshly reparented window. */
-	XSync(dpy, False);
-	while (XCheckTypedWindowEvent(dpy, c->win, UnmapNotify, &uev));
-	c->unmap_ignore_until = nowms() + 750;
+	if (!c->isfullscreen)
+		XMapWindow(dpy, c->title);
 	arrange(c->mon);
 	drawtitle(c, c == selmon->sel);
 	focus(NULL);
@@ -2987,9 +2984,6 @@ scan(void)
 	unsigned int i, num;
 	Window d1, d2, *wins = NULL;
 	XWindowAttributes wa;
-	Monitor *m;
-	Client *c;
-	XEvent ev;
 
 	if (XQueryTree(dpy, root, &d1, &d2, &wins, &num)) {
 		for (i = 0; i < num; i++) {
@@ -3014,12 +3008,6 @@ scan(void)
 		if (wins)
 			XFree(wins);
 	}
-	/* A previous reparenting WM can leave stale UnmapNotify events for
-	 * clients that were just adopted; do not unmanage them on the spot. */
-	XSync(dpy, False);
-	for (m = mons; m; m = m->next)
-		for (c = m->clients; c; c = c->next)
-			while (XCheckTypedWindowEvent(dpy, c->win, UnmapNotify, &ev));
 }
 
 void
@@ -3731,9 +3719,13 @@ unmapnotify(XEvent *e)
 	if ((c = wintoclient(ev->window))) {
 		if (ev->window != c->win)
 			return; /* frame/title unmapped by showhide or fullscreen */
-		/* XReparentWindow's UnmapNotify can arrive after manage()'s
-		 * consume loop (especially after a dwm restart); ignore it. */
-		if (c->unmap_ignore_until && nowms() < c->unmap_ignore_until)
+		/* Once reparented, the client's own unmaps are reported on its
+		 * StructureNotifyMask (event == win). An unmap reported to the
+		 * root comes from XReparentWindow adopting a mapped window
+		 * (scan() on restart) and must not unmanage it. A time-based
+		 * grace here used to keep windows that withdraw quickly as
+		 * empty, focused ghost frames. */
+		if (!ev->send_event && ev->event != c->win)
 			return;
 		if (ev->send_event)
 			setclientstate(c, WithdrawnState);
@@ -4082,7 +4074,9 @@ updatewindowtype(Client *c)
 	Atom state = getatomprop(c, netatom[NetWMState]);
 	Atom wtype = getatomprop(c, netatom[NetWMWindowType]);
 
-	if (state == netatom[NetWMFullscreen])
+	/* manage() calls this before the frame exists; it applies the
+	 * fullscreen state itself once the client is reparented. */
+	if (c->frame && state == netatom[NetWMFullscreen])
 		setfullscreen(c, 1);
 	if (wtype == netatom[NetWMWindowTypeDialog])
 		c->isfloating = 1;
