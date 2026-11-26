@@ -118,6 +118,10 @@ struct Client {
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
 	int mapped; /* frame currently mapped by showhide() */
 	uint32_t *icon; /* 16x16 premultiplied ARGB, NULL = no icon */
+	/* taskbar cache: title truncated to taskcap px and the item width
+	 * without the focus frame; taskcap < 0 = invalid */
+	int taskcap, taskw;
+	char tasktitle[320];
 	Client *next;
 	Client *snext;
 	Monitor *mon;
@@ -161,15 +165,17 @@ struct Monitor {
 	int tagx[33];
 	int statusx;
 	int barw;
+	int barwx, barwy, barww; /* barwin geometry last set by resizebarwin() */
 	int taskn;
-	int taskx[33];
-	Client *taskclients[32];
+	int *taskx;            /* listcap entries */
+	Client **taskclients;
 	/* tabbed layout state */
 	Client *tabsel;
-	Client *tabclients[32];
-	int tabx[32];
-	int tabw[32];
+	Client **tabclients;   /* listcap entries */
+	int *tabx;
+	int *tabw;
 	int tabn;
+	int listcap;
 };
 
 typedef struct {
@@ -377,6 +383,29 @@ static XRectangle outlinetab;
 struct NumTags { char limitexceeded[LENGTH(tags) > 31 ? -1 : 1]; };
 
 /* function implementations */
+
+/* Room in m's taskbar/tab caches for every client on m (plus the end
+ * marker of taskx). There is no fixed limit on the number of windows. */
+static void
+ensuremoncap(Monitor *m)
+{
+	Client *c;
+	int n = 1;
+
+	for (c = m->clients; c; c = c->next)
+		n++;
+	if (n <= m->listcap)
+		return;
+	n = MAX(n, 2 * m->listcap);
+	n = MAX(n, 32);
+	m->taskx = erealloc(m->taskx, n * sizeof *m->taskx);
+	m->taskclients = erealloc(m->taskclients, n * sizeof *m->taskclients);
+	m->tabclients = erealloc(m->tabclients, n * sizeof *m->tabclients);
+	m->tabx = erealloc(m->tabx, n * sizeof *m->tabx);
+	m->tabw = erealloc(m->tabw, n * sizeof *m->tabw);
+	m->listcap = n;
+}
+
 void
 applyrules(Client *c)
 {
@@ -677,6 +706,11 @@ cleanupmon(Monitor *mon)
 	XDestroyWindow(dpy, mon->barwin);
 	free(mon->lt);
 	free(mon->sellt);
+	free(mon->taskx);
+	free(mon->taskclients);
+	free(mon->tabclients);
+	free(mon->tabx);
+	free(mon->tabw);
 	free(mon);
 }
 
@@ -991,14 +1025,17 @@ truncatechars(const char *src, char *dst, size_t dstsz, int maxchars)
 	strcpy(dst + i, ellipsis);
 }
 
-/* Pixel-width truncation, like taskbar.py's truncate_px(). */
+/* Pixel-width truncation, like taskbar.py's truncate_px(). The prefix
+ * width grows with its length, so the longest prefix that fits next to the
+ * ellipsis is found by a binary search over the UTF-8 character boundaries
+ * (O(log n) text measurements instead of one per character). */
 void
 truncatepx(const char *src, char *dst, size_t dstsz, int maxpx)
 {
 	static const char ellipsis[] = "\xe2\x80\xa6";
 	char candidate[320];
-	size_t i = 0, best = 0;
-	int ellw = textwidth(ellipsis);
+	size_t bounds[320], nb = 0, i = 0, best = 0;
+	int lo, hi, mid, ellw;
 
 	if (!dstsz)
 		return;
@@ -1006,16 +1043,25 @@ truncatepx(const char *src, char *dst, size_t dstsz, int maxpx)
 		snprintf(dst, dstsz, "%s", src);
 		return;
 	}
-	while (src[i]) {
+	ellw = textwidth(ellipsis);
+	while (src[i] && nb < LENGTH(bounds)) {
 		size_t l = utf8charlen((const unsigned char *)src + i);
 		if (i + l >= sizeof candidate)
 			break;
-		memcpy(candidate, src, i + l);
-		candidate[i + l] = '\0';
-		if (textwidth(candidate) + ellw > maxpx)
-			break;
-		best = i + l;
 		i += l;
+		bounds[nb++] = i;
+	}
+	lo = 0;
+	hi = (int)nb - 1;
+	while (lo <= hi) {
+		mid = (lo + hi) / 2;
+		memcpy(candidate, src, bounds[mid]);
+		candidate[bounds[mid]] = '\0';
+		if (textwidth(candidate) + ellw <= maxpx) {
+			best = bounds[mid];
+			lo = mid + 1;
+		} else
+			hi = mid - 1;
 	}
 	if (!best || best + strlen(ellipsis) > dstsz - 1) {
 		dst[0] = '\0';
@@ -1030,6 +1076,7 @@ freeicon(Client *c)
 {
 	free(c->icon);
 	c->icon = NULL;
+	c->taskcap = -1;
 }
 
 /* Box-filter the chosen _NET_WM_ICON source down/up to 16x16 and
@@ -1154,6 +1201,7 @@ updateicon(Client *c)
 {
 	freeicon(c);
 	c->icon = readicon(c->win);
+	c->taskcap = -1;
 }
 
 
@@ -1236,7 +1284,7 @@ drawtitle(Client *c, int focused)
 	int tw, pad = 8, avail, textw, iconx, textx;
 	int urgent = c->isurgent;
 	unsigned int seltitle = urgent ? SchemeUrg : focused ? SchemeSel : SchemeNorm;
-	Client *t, *list[32];
+	Client *t, **list;
 	int n = 0, i, idx = -1, cellw, tx, twi, narrow;
 	int istabbed;
 
@@ -1248,8 +1296,9 @@ drawtitle(Client *c, int focused)
 	istabbed = curlayout(c->mon)->arrange == tabbed;
 
 	if (istabbed && c == c->mon->tabsel && !c->isfloating) {
-		for (t = nexttiled(c->mon->clients); t && n < (int)LENGTH(list);
-		     t = nexttiled(t->next))
+		ensuremoncap(c->mon);
+		list = c->mon->tabclients;
+		for (t = nexttiled(c->mon->clients); t; t = nexttiled(t->next))
 			list[n++] = t;
 		if (n > 1) {
 			cellw = tw / n;
@@ -1259,7 +1308,6 @@ drawtitle(Client *c, int focused)
 				t = list[i];
 				tx = i * cellw;
 				twi = (i == n - 1) ? tw - tx : cellw;
-				c->mon->tabclients[i] = t;
 				c->mon->tabx[i] = tx;
 				c->mon->tabw[i] = twi;
 				if (t == c->mon->tabsel) {
@@ -1355,41 +1403,45 @@ drawclienttitles(Client *c)
 	drawtitle(t, t == c->mon->sel);
 }
 
+/* Taskbar title of c for a pixel budget (0 = no cap), cached per client:
+ * drawbar() runs on every focus or title change and the fitting search
+ * below asks for the same widths again and again. */
+static const char *
+tasktitle(Client *c, int cap)
+{
+	char raw[320];
+
+	if (c->taskcap != cap) {
+		truncatechars(c->name, raw, sizeof raw, 28);
+		if (cap > 0)
+			truncatepx(raw, c->tasktitle, sizeof c->tasktitle, cap);
+		else
+			snprintf(c->tasktitle, sizeof c->tasktitle, "%s", raw);
+		c->taskw = textwidth(" ") + (c->icon ? ICONSIZE + icongap : 0)
+			+ textwidth(c->tasktitle) + textwidth(" ");
+		c->taskcap = cap;
+	}
+	return c->tasktitle;
+}
+
 /* Width of one taskbar item; cap is the title's pixel budget (0 = no cap). */
 int
 taskwidth(Client *c, int cap)
 {
-	char raw[320], title[320];
-	int w;
-
-	truncatechars(c->name, raw, sizeof raw, 28);
-	if (cap > 0)
-		truncatepx(raw, title, sizeof title, cap);
-	else
-		snprintf(title, sizeof title, "%s", raw);
-
-	w = textwidth(" ") + (c->icon ? ICONSIZE + icongap : 0)
-		+ textwidth(title) + textwidth(" ");
-	if (c == c->mon->sel)
-		w += 2; /* 1px border on each side */
-	return w;
+	tasktitle(c, cap);
+	/* 1px focus frame on each side */
+	return c->taskw + (c == c->mon->sel ? 2 : 0);
 }
 
 void
 drawtask(Monitor *m, Client *c, int *x, int cap)
 {
-	char raw[320], title[320];
 	int focused = c == m->sel;
 	int urgent = c->isurgent;
 	int w = taskwidth(c, cap);
 	int x0 = *x, tx;
 	int seltask = urgent ? SchemeTaskUrg : focused ? SchemeTaskSel : SchemeTask;
-
-	truncatechars(c->name, raw, sizeof raw, 28);
-	if (cap > 0)
-		truncatepx(raw, title, sizeof title, cap);
-	else
-		snprintf(title, sizeof title, "%s", raw);
+	const char *title = tasktitle(c, cap);
 
 	if (focused || urgent) {
 		drw_setscheme(drw, scheme[seltask]);
@@ -1422,12 +1474,14 @@ drawtask(Monitor *m, Client *c, int *x, int cap)
 void
 drawtasks(Monitor *m, int x, int right)
 {
-	Client *c, *list[32];
+	Client *c, **list;
 	int n = 0, shown, i, avail, total, sepw, cap = 0, hidden = 0;
 	int minpx = 56;
 
 	m->taskn = 0;
-	for (c = m->clients; c && n < (int)LENGTH(list); c = c->next)
+	ensuremoncap(m);
+	list = m->taskclients;
+	for (c = m->clients; c; c = c->next)
 		if (ISVISIBLE(c))
 			list[n++] = c;
 	if (!n)
@@ -1483,7 +1537,6 @@ drawtasks(Monitor *m, int x, int right)
 
 	shown = n;
 	for (i = 0; i < shown; i++) {
-		m->taskclients[i] = list[i];
 		m->taskx[i] = x;
 		drawtask(m, list[i], &x, cap);
 		m->taskn = i + 1;
@@ -1610,7 +1663,7 @@ focus(Client *c)
 		 * viewable, and hidden clients have their frame unmapped (another
 		 * tag, another tab). Map it before giving it the keyboard, or the
 		 * focus falls back to PointerRoot once the old frame is hidden. */
-		if (!c->mapped || curlayout(c->mon)->arrange == tabbed)
+		if (!c->mapped)
 			arrange(c->mon);
 		setfocus(c);
 	} else {
@@ -1640,29 +1693,17 @@ focusdir(const Arg *arg)
 		const Layout *l = curlayout(selmon);
 
 		if (l->arrange == tabbed || l->arrange == monocle) {
-			Client *list[64];
-			unsigned int n = 0, i, idx = 0;
+			Client *cur = !selmon->sel->isfloating ? selmon->sel : selmon->tabsel;
+			unsigned int n = 0, idx = 0;
 
-			for (c = nexttiled(selmon->clients); c && n < LENGTH(list);
-			     c = nexttiled(c->next))
-				list[n++] = c;
+			for (c = nexttiled(selmon->clients); c; c = nexttiled(c->next), n++)
+				if (c == cur)
+					idx = n;
 			if (n == 0)
 				return;
-			if (selmon->sel && !selmon->sel->isfloating) {
-				for (i = 0; i < n; i++)
-					if (list[i] == selmon->sel) {
-						idx = i;
-						break;
-					}
-			} else if (selmon->tabsel) {
-				for (i = 0; i < n; i++)
-					if (list[i] == selmon->tabsel) {
-						idx = i;
-						break;
-					}
-			}
 			idx = (arg->i == DirLeft) ? (idx + n - 1) % n : (idx + 1) % n;
-			focus(list[idx]);
+			for (c = nexttiled(selmon->clients); idx--; c = nexttiled(c->next));
+			focus(c);
 			restack(selmon);
 			return;
 		}
@@ -2040,6 +2081,7 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 
 	c = ecalloc(1, sizeof(Client));
 	c->win = w;
+	c->taskcap = -1;
 	c->oldbw = wa->border_width;
 	c->bw = borderpx;
 
@@ -2260,8 +2302,7 @@ swapclients(Monitor *m, Client *a, Client *b)
 void
 movedir(const Arg *arg)
 {
-	Client *c, *list[64];
-	int n = 0, i, j;
+	Client *c, *prev = NULL, *next = NULL;
 
 	if (!selmon->sel)
 		return;
@@ -2278,15 +2319,15 @@ movedir(const Arg *arg)
 		resize(c, x, y, c->w, c->h, 1);
 		return;
 	}
-	for (c = nexttiled(selmon->clients); c && n < (int)LENGTH(list); c = nexttiled(c->next))
-		list[n++] = c;
-	for (i = 0; i < n && list[i] != selmon->sel; i++);
-	if (i == n)
+	for (c = nexttiled(selmon->clients); c && c != selmon->sel; c = nexttiled(c->next))
+		prev = c;
+	if (!c)
 		return;
-	j = (arg->i == DirLeft || arg->i == DirUp) ? i - 1 : i + 1;
-	if (j < 0 || j >= n)
+	next = nexttiled(c->next);
+	c = (arg->i == DirLeft || arg->i == DirUp) ? prev : next;
+	if (!c)
 		return;
-	swapclients(selmon, list[i], list[j]);
+	swapclients(selmon, selmon->sel, c);
 	arrange(selmon);
 }
 
@@ -2457,8 +2498,8 @@ static int
 outlinetabrect(Client *c, XRectangle *tab)
 {
 	Monitor *m = c->mon;
-	Client *t, *list[32];
-	int n = 0, i, idx = -1, tw, cellw, tx, twi;
+	Client *t;
+	int n = 0, idx = -1, tw, cellw, tx, twi;
 
 	if (!m || !c->title || c->isfullscreen || c->isfloating
 	|| titleheight <= 0 || curlayout(m)->arrange != tabbed)
@@ -2466,17 +2507,12 @@ outlinetabrect(Client *c, XRectangle *tab)
 	tw = c->w - 2 * c->bw;
 	if (tw <= 0)
 		return 0;
-	for (t = nexttiled(m->clients); t && n < (int)LENGTH(list);
-	     t = nexttiled(t->next))
-		list[n++] = t;
+	for (t = nexttiled(m->clients); t; t = nexttiled(t->next), n++)
+		if (t == c)
+			idx = n;
 	if (n <= 1)
 		return 0;
 	cellw = tw / n;
-	for (i = 0; i < n; i++)
-		if (list[i] == c) {
-			idx = i;
-			break;
-		}
 	if (idx < 0)
 		return 0;
 	tx = idx * cellw;
@@ -2752,6 +2788,12 @@ resizebarwin(Monitor *m) {
 	unsigned int w = m->ww;
 	if (showsystray && systray && m == systraytomon(m) && !systrayonleft)
 		w -= getsystraywidth();
+	/* drawbar() calls this on every redraw: only move when it changed */
+	if (m->barwx == m->wx && m->barwy == m->by && m->barww == (int)w)
+		return;
+	m->barwx = m->wx;
+	m->barwy = m->by;
+	m->barww = (int)w;
 	XMoveResizeWindow(dpy, m->barwin, m->wx, m->by, w, bh);
 }
 
@@ -4064,6 +4106,7 @@ updatetitle(Client *c)
 		gettextprop(c->win, XA_WM_NAME, c->name, sizeof c->name);
 	if (c->name[0] == '\0') /* hack to mark broken clients */
 		strcpy(c->name, broken);
+	c->taskcap = -1;
 	if (c->title)
 		drawtitle(c, c == selmon->sel);
 }
