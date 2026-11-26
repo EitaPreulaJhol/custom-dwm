@@ -8,6 +8,7 @@ set -u
 make -s clean all || exit 1
 cc -O2 -o /tmp/focuswin test/focuswin.c -lX11 || exit 1
 cc -O2 -o /tmp/setbg test/setbg.c -lX11 || exit 1
+cc -O2 -o /tmp/activate test/activate.c -lX11 || exit 1
 
 DISPLAY_NUM="${DISPLAY_NUM:-99}"
 export DISPLAY=":${DISPLAY_NUM}"
@@ -143,12 +144,14 @@ geo=$(xwininfo -id "$F" | awk '/Absolute upper-left X/ {x=$4} /Absolute upper-le
 check "fullscreen-at-map F has the keyboard" F n
 
 # 8. _NET_ACTIVE_WINDOW (i3 focus_on_window_activation smart): a visible
-#    window is focused; one on another tag only becomes urgent.
+#    window is focused; one on another tag only becomes urgent. The
+#    helper sends only the client message, like an application would
+#    (xdotool switches to the window's _NET_WM_DESKTOP first).
 key super+4
-xdotool windowactivate --sync "$H" >/dev/null 2>&1 &
+/tmp/activate "$H"
 sleep 0.5
 check "_NET_ACTIVE_WINDOW focuses visible H" H o
-xdotool windowactivate "$A" >/dev/null 2>&1 &
+/tmp/activate "$A"
 sleep 0.5
 check "_NET_ACTIVE_WINDOW on hidden A keeps H" H p
 
