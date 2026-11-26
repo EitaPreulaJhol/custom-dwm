@@ -323,9 +323,9 @@ static void view(const Arg *arg);
 static Client *wintoclient(Window w);
 static Monitor *wintomon(Window w);
 static Client *wintosystrayicon(Window w);
-static int xerror(Display *dpy, XErrorEvent *ee);
-static int xerrordummy(Display *dpy, XErrorEvent *ee);
-static int xerrorstart(Display *dpy, XErrorEvent *ee);
+static int xerror(Display *d, XErrorEvent *ee);
+static int xerrordummy(Display *d, XErrorEvent *ee);
+static int xerrorstart(Display *d, XErrorEvent *ee);
 static void zoom(const Arg *arg);
 
 /* variables */
@@ -1036,17 +1036,17 @@ freeicon(Client *c)
  * premultiply it.  Premultiplied pixels composite over the scheme
  * background without dark fringes on transparent icon corners. */
 static void
-scaleicon(const unsigned long *src, int sw, int sh, uint32_t *dst)
+scaleicon(const unsigned long *src, int srcw, int srch, uint32_t *dst)
 {
 	unsigned long p;
 	unsigned long long sa, sr, sg, sb;
 	unsigned int a, r, g, b, count;
 	int x, y, sx, sy, x0, x1, y0, y1;
 
-	if (sw == ICONSIZE && sh == ICONSIZE) {
+	if (srcw == ICONSIZE && srch == ICONSIZE) {
 		for (y = 0; y < ICONSIZE; y++) {
 			for (x = 0; x < ICONSIZE; x++) {
-				p = src[y * sw + x];
+				p = src[y * srcw + x];
 				a = (p >> 24) & 0xff;
 				r = (p >> 16) & 0xff;
 				g = (p >> 8) & 0xff;
@@ -1060,20 +1060,20 @@ scaleicon(const unsigned long *src, int sw, int sh, uint32_t *dst)
 		return;
 	}
 	for (y = 0; y < ICONSIZE; y++) {
-		y0 = y * sh / ICONSIZE;
-		y1 = (y + 1) * sh / ICONSIZE;
+		y0 = y * srch / ICONSIZE;
+		y1 = (y + 1) * srch / ICONSIZE;
 		if (y1 <= y0)
 			y1 = y0 + 1;
 		for (x = 0; x < ICONSIZE; x++) {
-			x0 = x * sw / ICONSIZE;
-			x1 = (x + 1) * sw / ICONSIZE;
+			x0 = x * srcw / ICONSIZE;
+			x1 = (x + 1) * srcw / ICONSIZE;
 			if (x1 <= x0)
 				x1 = x0 + 1;
 			sa = sr = sg = sb = 0;
 			count = 0;
 			for (sy = y0; sy < y1; sy++) {
 				for (sx = x0; sx < x1; sx++) {
-					p = src[sy * sw + sx];
+					p = src[sy * srcw + sx];
 					a = (p >> 24) & 0xff;
 					sa += a;
 					sr += (unsigned long long)((p >> 16) & 0xff) * a;
@@ -1099,7 +1099,7 @@ static uint32_t *
 readicon(Window w)
 {
 	Atom actual;
-	int format, have = 0, bestgood = 0, bw = 0, bh = 0;
+	int format, have = 0, bestgood = 0, bestw = 0, besth = 0;
 	unsigned long i, n, after, best = 0, bestarea = 0, iw, ih, area;
 	unsigned char *data = NULL;
 	unsigned long *prop;
@@ -1131,8 +1131,8 @@ readicon(Window w)
 		|| (good == bestgood && ((good && area < bestarea)
 		|| (!good && area > bestarea)))) {
 			best = i;
-			bw = iw;
-			bh = ih;
+			bestw = iw;
+			besth = ih;
 			bestarea = area;
 			bestgood = good;
 			have = 1;
@@ -1144,7 +1144,7 @@ readicon(Window w)
 		return NULL;
 	}
 	icon = ecalloc(ICONSIZE * ICONSIZE, sizeof(uint32_t));
-	scaleicon((const unsigned long *)(prop + best), bw, bh, icon);
+	scaleicon((const unsigned long *)(prop + best), bestw, besth, icon);
 	XFree(data);
 	return icon;
 }
@@ -1506,7 +1506,7 @@ drawtasks(Monitor *m, int x, int right)
 void
 drawbar(Monitor *m)
 {
-	int x, tw = 0, sw = 0, barw;
+	int x, tw = 0, traysw = 0, barw;
 	unsigned int i, occ = 0, urg = 0;
 	Client *c;
 
@@ -1514,9 +1514,9 @@ drawbar(Monitor *m)
 		return;
 
 	if (showsystray && systray && m == systraytomon(m) && !systrayonleft)
-		sw = getsystraywidth();
+		traysw = getsystraywidth();
 	resizebarwin(m);
-	barw = m->ww - sw;
+	barw = m->ww - traysw;
 	if (barw < 0)
 		barw = 0;
 	m->barw = barw;
@@ -2659,6 +2659,9 @@ propertynotify(XEvent *e)
 			break;
 		case XA_WM_HINTS:
 			updatewmhints(c);
+			XSetWindowBorder(dpy, c->frame, scheme[c->isurgent ? SchemeUrg
+				: c == selmon->sel ? SchemeSel : SchemeNorm][ColBorder].pixel);
+			drawclienttitles(c);
 			drawbars();
 			break;
 		}
@@ -2704,7 +2707,7 @@ removesystrayicon(Client *i)
 	if (!showsystray || !i)
 		return;
 	for (ii = &systray->icons; *ii && *ii != i; ii = &(*ii)->next);
-	if (ii)
+	if (*ii)
 		*ii = i->next;
 	free(i);
 }
@@ -3427,9 +3430,6 @@ spawn(const Arg *arg)
 	struct sigaction sa;
 	pid_t pid;
 
-	if (arg->v == dmenucmd)
-		snprintf(dmenumon, sizeof(dmenumon), "%d", selmon->num);
-
 	if ((pid = fork()) == -1) {
 		fprintf(stderr, "dwm: fork failed: %s\n", strerror(errno));
 		return;
@@ -3998,13 +3998,13 @@ updatesystray(void)
 	Client *i;
 	Monitor *m = systraytomon(NULL);
 	unsigned int x = m->mx + m->mw;
-	unsigned int sw = TEXTW(stext) - lrpad + systrayspacing;
+	unsigned int stextw = TEXTW(stext) - lrpad + systrayspacing;
 	unsigned int w = 1;
 
 	if (!showsystray)
 		return;
 	if (systrayonleft)
-		x -= sw + lrpad / 2;
+		x -= stextw + lrpad / 2;
 	if (!systray) {
 		/* init systray */
 		if (!(systray = (Systray *)calloc(1, sizeof(Systray))))
@@ -4157,7 +4157,7 @@ wintomon(Window w)
  * ignored (especially on UnmapNotify's). Other types of errors call Xlibs
  * default error handler, which may call exit. */
 int
-xerror(Display *dpy, XErrorEvent *ee)
+xerror(Display *d, XErrorEvent *ee)
 {
 	if (ee->error_code == BadWindow
 	|| (ee->request_code == X_SetInputFocus && ee->error_code == BadMatch)
@@ -4171,11 +4171,11 @@ xerror(Display *dpy, XErrorEvent *ee)
 		return 0;
 	fprintf(stderr, "dwm: fatal error: request code=%d, error code=%d\n",
 		ee->request_code, ee->error_code);
-	return xerrorxlib(dpy, ee); /* may call exit */
+	return xerrorxlib(d, ee); /* may call exit */
 }
 
 int
-xerrordummy(Display *dpy, XErrorEvent *ee)
+xerrordummy(Display *d, XErrorEvent *ee)
 {
 	return 0;
 }
@@ -4183,7 +4183,7 @@ xerrordummy(Display *dpy, XErrorEvent *ee)
 /* Startup Error handler to check if another window manager
  * is already running. */
 int
-xerrorstart(Display *dpy, XErrorEvent *ee)
+xerrorstart(Display *d, XErrorEvent *ee)
 {
 	die("dwm: another window manager is already running");
 	return -1;

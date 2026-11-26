@@ -21,7 +21,6 @@ static const int gappo              = 10;       /* gaps around the monitor edge 
 static const int floatmaxw          = 1310;     /* i3: floating_maximum_size 1310x710 */
 static const int floatmaxh          = 710;
 static const char *fonts[]          = { "Sans:pixelsize=12", "Symbols Nerd Font Mono:pixelsize=12" };
-static const char dmenufont[]       = "Sans:pixelsize=12";
 static const char col_bg[]          = "#DEDEDE"; /* bar background */
 static const char col_fg[]          = "#333333"; /* bar text */
 static const char col_selbg[]       = "#C5C5C5"; /* focused tag/task background */
@@ -97,8 +96,6 @@ static const Layout layouts[] = {
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
 
 /* commands */
-static char dmenumon[8]; /* component of dmenucmd, manipulated in spawn() */
-static const char *dmenucmd[] = { "dmenu_run", "-m", dmenumon, "-fn", dmenufont, "-nb", col_bg, "-nf", col_fg, "-sb", col_selbg, "-sf", col_selfg, NULL };
 static const char *termcmd[]  = { "st", NULL };
 static const char *filecmd[]  = { "pcmanfm", NULL };
 static const char *shotcmd[]  = { "flameshot", "gui", NULL };
@@ -172,7 +169,6 @@ static const Key keys[] = {
 	{ MODKEY,                       XK_period, focusmon,       {.i = +1 } },
 	{ MODKEY|ShiftMask,             XK_comma,  tagmon,         {.i = -1 } },
 	{ MODKEY|ShiftMask,             XK_period, tagmon,         {.i = +1 } },
-	{ MODKEY|ShiftMask,             XK_q,      quit,           {0} },
 };
 
 /* button definitions */

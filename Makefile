@@ -14,10 +14,10 @@ all: dwm
 .c.o:
 	${CC} -c ${CFLAGS} $<
 
-${OBJ}: config.h config.mk
-
-config.h:
-	cp config.def.h $@
+${OBJ}: config.mk
+dwm.o: config.h drw.h util.h
+drw.o: drw.h util.h
+util.o: util.h
 
 dwm: ${OBJ}
 	${CC} -o $@ ${OBJ} ${LDFLAGS}
@@ -27,8 +27,9 @@ clean:
 
 dist: clean
 	mkdir -p dwm-${VERSION}
-	cp -R LICENSE Makefile README config.def.h config.mk\
-		dwm.1 drw.h util.h ${SRC} dwm.png transient.c dwm-${VERSION}
+	cp -R LICENSE Makefile README.md config.h config.mk\
+		dwm.1 drw.h util.h ${SRC} transient.c patches integration \
+		dwm-${VERSION}
 	tar -cf dwm-${VERSION}.tar dwm-${VERSION}
 	gzip dwm-${VERSION}.tar
 	rm -rf dwm-${VERSION}
