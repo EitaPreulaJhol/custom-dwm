@@ -3,5 +3,6 @@
 if xmessage -name dwm-exit -center -buttons 'Yes:0,No:1' -default No \
 	'You pressed the exit shortcut. Do you really want to exit dwm? This will end your X session.'; then
 	touch "$HOME/.dwm/exit"
-	pkill -TERM -x dwm
+	# SIGTERM: dwm cleans up and exits; dwm-session sees the flag and stops.
+	pid=$(dwm-wmpid) && kill -TERM "$pid"
 fi

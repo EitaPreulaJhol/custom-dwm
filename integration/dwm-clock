@@ -1,7 +1,8 @@
 #!/bin/sh
 # Date/time in the dwm bar: sets the root WM_NAME, which dwm's updatestatus()
 # reads and draws right-aligned. Format matches the polybar reference.
+# Wakes up at the start of each minute, so the clock never lags.
 while :; do
-	xsetroot -name "$(date '+%d-%m-%Y %H:%M')"
-	sleep 10
+	xsetroot -name "$(date '+%d-%m-%Y %H:%M')" || exit 1
+	sleep $((60 - $(date '+%S' | sed 's/^0//')))
 done

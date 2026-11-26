@@ -15,16 +15,32 @@ rm -f "$HOME/.dwm/exit"
 # when dwm re-execs.
 "$HOME/.dwm/autostart.sh" >/dev/null 2>&1 &
 
+# dwm's stderr goes to ~/.dwm/dwm.log (the previous one is kept as .old).
+log="$HOME/.dwm/dwm.log"
+[ -f "$log" ] && mv -f "$log" "$log.old"
+
+# Restarts ($mod+Shift+r) happen inside dwm (it re-execs itself), so this
+# loop only runs again when dwm exits or crashes. A dwm that keeps dying
+# right after start is retried with a growing delay instead of spinning.
+delay=1
 while :; do
 	# The focus outline is built into dwm now; drop a helper left over from
 	# an older install (comm is truncated to 15 characters).
-	pkill -x i3-focus-outlin 2>/dev/null || true
-	"${DWM:-dwm}"
+	pkill -u "$(id -u)" -x i3-focus-outlin 2>/dev/null || true
+	start=$(date +%s)
+	"${DWM:-dwm}" 2>>"$log"
+	status=$?
 	if [ -f "$HOME/.dwm/exit" ]; then
 		rm -f "$HOME/.dwm/exit"
 		break
 	fi
-	# Give the X server time to process the old connection's save-set
-	# reparenting before the new dwm scans the root window.
-	sleep 0.5
+	echo "dwm-session: dwm exited with status $status at $(date)" >>"$log"
+	if [ $(( $(date +%s) - start )) -lt 10 ]; then
+		delay=$(( delay < 16 ? delay * 2 : 30 ))
+	else
+		delay=1
+	fi
+	# Also gives the X server time to process the old connection's
+	# save-set reparenting before the new dwm scans the root window.
+	sleep "$delay"
 done

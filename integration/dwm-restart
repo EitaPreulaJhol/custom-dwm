@@ -1,8 +1,6 @@
 #!/bin/sh
-# $mod+Shift+r / $mod+Shift+c: restart dwm in place.
-# dwm-session runs dwm in a loop, so the X clients and the autostart helpers
-# stay alive.
-# The focus outline moved into dwm; stop an external helper from an older
-# install before the new binary takes over (comm is truncated to 15 chars).
-pkill -x i3-focus-outlin 2>/dev/null || true
-pkill -TERM -x dwm
+# Restart dwm in place (same as $mod+Shift+r): SIGHUP makes dwm save its
+# state, release the clients and re-exec itself, so a newly installed binary
+# is picked up and windows keep their tags, layouts, order and focus.
+pid=$(dwm-wmpid) || { echo "dwm-restart: no dwm on $DISPLAY" >&2; exit 1; }
+kill -HUP "$pid"

@@ -21,6 +21,7 @@
  * To understand everything else, start reading main().
  */
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <locale.h>
 #include <signal.h>
@@ -28,7 +29,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
+#include <sys/select.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <X11/cursorfont.h>
@@ -60,6 +63,13 @@
 #define MFACT(M)                ((M)->mfacts[curtag(M)])
 #define NMASTER(M)              ((M)->nmasters[curtag(M)])
 
+/* restart state (see savestate()) */
+#define STATEMAGIC              0x64776d31L /* "dwm1" */
+#define STATEHEAD               4  /* magic, ntags, nmons, selmon */
+#define MONSTATE                6  /* num, seltags, tagset[2], sel, showbar */
+#define TAGSTATE                5  /* sellt, lt[2], mfact, nmaster */
+#define CLIENTSTATE             5  /* tags, mon, floating, cfact, order */
+
 #define SYSTEM_TRAY_REQUEST_DOCK    0
 /* XEMBED messages */
 #define XEMBED_EMBEDDED_NOTIFY      0
@@ -81,7 +91,10 @@ enum { SchemeNorm, SchemeSel, SchemeUrg, SchemeTagEmpty, SchemeTagOcc,
 enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetSystemTray, NetSystemTrayOP, NetSystemTrayOrientation, NetSystemTrayOrientationHorz,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
-       NetWMWindowTypeDialog, NetClientList, NetDwmTab, NetWmIcon, NetLast }; /* EWMH atoms */
+       NetWMWindowTypeDialog, NetClientList, NetDwmTab, NetWmIcon,
+       NetWMDesktop, NetCurrentDesktop, NetNumberOfDesktops, NetDesktopNames,
+       NetLast }; /* EWMH atoms */
+enum { DwmClientState, DwmState, DwmLast }; /* dwm restart state */
 enum { Manager, Xembed, XembedInfo, XLast }; /* Xembed atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
 enum { ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkBorder, ClkTitleBar, ClkTab, ClkRootWin, ClkLast }; /* clicks */
@@ -117,6 +130,8 @@ struct Client {
 	int basew, baseh, incw, inch, maxw, maxh, minw, minh, hintsvalid;
 	int bw, oldbw;
 	float cfact; /* share of its column/row in the tiling layouts */
+	long savedstate[CLIENTSTATE]; /* last _DWM_CLIENT_STATE written */
+	int statevalid;
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
 	int mapped; /* frame currently mapped by showhide() */
@@ -271,6 +286,10 @@ static void pop(Client *c);
 static void grabmodekeys(int grab);
 static void propertynotify(XEvent *e);
 static void quit(const Arg *arg);
+static void restart(const Arg *arg);
+static void savestate(void);
+static void loadstate(void);
+static int readclientstate(Window w, long *st);
 static Monitor *recttomon(int x, int y, int w, int h);
 static void removesystrayicon(Client *i);
 static void resize(Client *c, int x, int y, int w, int h, int interact);
@@ -365,8 +384,15 @@ static void (*handler[LASTEvent]) (XEvent *) = {
 	[ResizeRequest] = resizerequest,
 	[UnmapNotify] = unmapnotify
 };
-static Atom wmatom[WMLast], netatom[NetLast], xatom[XLast];
+static Atom wmatom[WMLast], netatom[NetLast], xatom[XLast], dwmatom[DwmLast];
 static int running = 1;
+static int restartwm;      /* re-exec after cleanup() */
+static int cleaningup;     /* cleanup() runs: keep the saved state */
+static int stateready;     /* scan() finished: state may be saved */
+static int sigpipe[2] = { -1, -1 };
+static volatile sig_atomic_t pendingsig;
+static int loadedselmon = -1;
+static Window loadedsel[32]; /* focused client per monitor, from _DWM_STATE */
 static int wmmode = ModeNormal;
 static Cur *cursor[CurLast];
 static Clr **scheme;
@@ -553,6 +579,7 @@ arrange(Monitor *m)
 	} else for (m = mons; m; m = m->next)
 		arrangemon(m);
 	outlineupdate();
+	savestate();
 }
 
 void
@@ -662,6 +689,7 @@ cleanup(void)
 	Monitor *m;
 	size_t i;
 
+	cleaningup = 1;
 	view(&a);
 	for (i = 0; i < LENGTH(tags); i++)
 		selmon->lt[i * 2 + selmon->sellt[i]] = &foo;
@@ -1684,6 +1712,7 @@ focus(Client *c)
 	if (c)
 		drawtitle(c, 1);
 	outlineupdate();
+	savestate();
 }
 
 void
@@ -2087,6 +2116,7 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 	Window trans = None;
 	XSetWindowAttributes fwa, twa;
 	int th = titleheight;
+	long st[CLIENTSTATE];
 
 	c = ecalloc(1, sizeof(Client));
 	c->win = w;
@@ -2106,6 +2136,23 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 		applyrules(c);
 	}
 	updatewindowtype(c);
+	/* dwm restart: the previous instance left tags, monitor, floating
+	 * state and size factor on the window. */
+	if (adopt && readclientstate(w, st)) {
+		Monitor *m;
+
+		if (st[0] & TAGMASK)
+			c->tags = st[0] & TAGMASK;
+		for (m = mons; m && m->num != st[1]; m = m->next);
+		if (m) {
+			c->mon = m;
+			if (!(c->tags & TAGMASK))
+				c->tags = m->tagset[m->seltags];
+		}
+		c->isfloating = st[2] ? 1 : 0;
+		if (st[3] > 0)
+			c->cfact = st[3] / 1000.0;
+	}
 
 	/* The frame is the layout unit: X border + title bar + client. */
 	c->x = c->oldx = wa->x + wa->border_width - borderpx;
@@ -2778,6 +2825,209 @@ quit(const Arg *arg)
 	running = 0;
 }
 
+/* Leave run(), clean up (clients go back to the root with their state saved
+ * in properties) and exec the dwm binary again: a freshly installed one is
+ * picked up through PATH. */
+void
+restart(const Arg *arg)
+{
+	restartwm = 1;
+	running = 0;
+}
+
+static long
+layoutindex(const Layout *l)
+{
+	long i;
+
+	for (i = 0; i < (long)LENGTH(layouts); i++)
+		if (l == &layouts[i])
+			return i;
+	return 0;
+}
+
+/* _DWM_CLIENT_STATE and the EWMH _NET_WM_DESKTOP of one client. Both are
+ * kept up to date (not only at restart) so even a crashed dwm can be
+ * restored by the next one. */
+static void
+setclientprops(Client *c, long order)
+{
+	long st[CLIENTSTATE], desk;
+
+	st[0] = c->tags;
+	st[1] = c->mon->num;
+	st[2] = c->isfullscreen ? c->oldstate : c->isfloating;
+	st[3] = (long)(c->cfact * 1000 + 0.5);
+	st[4] = order;
+	if (c->statevalid && !memcmp(st, c->savedstate, sizeof st))
+		return;
+	memcpy(c->savedstate, st, sizeof st);
+	c->statevalid = 1;
+	XChangeProperty(dpy, c->win, dwmatom[DwmClientState], XA_CARDINAL, 32,
+		PropModeReplace, (unsigned char *)st, CLIENTSTATE);
+	desk = (c->tags & TAGMASK) == TAGMASK ? 0xFFFFFFFFL
+		: (long)(ffs((int)c->tags) - 1);
+	XChangeProperty(dpy, c->win, netatom[NetWMDesktop], XA_CARDINAL, 32,
+		PropModeReplace, (unsigned char *)&desk, 1);
+}
+
+static int
+readclientstate(Window w, long *st)
+{
+	Atom type;
+	int format, ok = 0;
+	unsigned long n, after;
+	unsigned char *p = NULL;
+
+	if (XGetWindowProperty(dpy, w, dwmatom[DwmClientState], 0, CLIENTSTATE,
+		False, XA_CARDINAL, &type, &format, &n, &after, &p) == Success && p) {
+		if (type == XA_CARDINAL && format == 32 && n == CLIENTSTATE) {
+			memcpy(st, p, CLIENTSTATE * sizeof(long));
+			ok = 1;
+		}
+		XFree(p);
+	}
+	return ok;
+}
+
+/* Monitor tags, layouts, factors and the focused client on the root window
+ * (_DWM_STATE), client tags/floating/order on each client, plus the EWMH
+ * desktop properties. Only changed values are written. */
+void
+savestate(void)
+{
+	static long *prev;
+	static size_t prevn;
+	static long prevdesk = -1;
+	Monitor *m;
+	Client *c;
+	long *buf, order, desk;
+	size_t n, k, nmons = 0;
+	unsigned int t;
+
+	if (!stateready || cleaningup || !selmon)
+		return;
+	for (m = mons; m; m = m->next)
+		nmons++;
+	n = STATEHEAD + nmons * (MONSTATE + TAGSTATE * LENGTH(tags));
+	buf = ecalloc(n, sizeof(long));
+	buf[0] = STATEMAGIC;
+	buf[1] = LENGTH(tags);
+	buf[2] = nmons;
+	buf[3] = selmon->num;
+	k = STATEHEAD;
+	for (m = mons; m; m = m->next) {
+		buf[k++] = m->num;
+		buf[k++] = m->seltags;
+		buf[k++] = m->tagset[0];
+		buf[k++] = m->tagset[1];
+		buf[k++] = m->sel ? (long)m->sel->win : 0;
+		buf[k++] = m->showbar;
+		for (t = 0; t < LENGTH(tags); t++) {
+			buf[k++] = m->sellt[t];
+			buf[k++] = layoutindex(m->lt[t * 2]);
+			buf[k++] = layoutindex(m->lt[t * 2 + 1]);
+			buf[k++] = (long)(m->mfacts[t] * 1000 + 0.5);
+			buf[k++] = m->nmasters[t];
+		}
+		for (order = 0, c = m->clients; c; c = c->next, order++)
+			setclientprops(c, order);
+	}
+	if (n != prevn || memcmp(buf, prev, n * sizeof(long))) {
+		XChangeProperty(dpy, root, dwmatom[DwmState], XA_CARDINAL, 32,
+			PropModeReplace, (unsigned char *)buf, n);
+		free(prev);
+		prev = buf;
+		prevn = n;
+	} else
+		free(buf);
+	desk = curtag(selmon);
+	if (desk != prevdesk) {
+		XChangeProperty(dpy, root, netatom[NetCurrentDesktop], XA_CARDINAL, 32,
+			PropModeReplace, (unsigned char *)&desk, 1);
+		prevdesk = desk;
+	}
+}
+
+/* Apply _DWM_STATE to the monitors before scan() adopts the clients. */
+void
+loadstate(void)
+{
+	Atom type;
+	int format;
+	unsigned long n, after, k;
+	unsigned char *p = NULL;
+	long *st, nmons, i, v;
+	unsigned int t;
+	Monitor *m;
+
+	if (XGetWindowProperty(dpy, root, dwmatom[DwmState], 0, 1 << 16, False,
+		XA_CARDINAL, &type, &format, &n, &after, &p) != Success || !p)
+		return;
+	st = (long *)p;
+	if (type != XA_CARDINAL || format != 32 || n < STATEHEAD
+	|| st[0] != STATEMAGIC || st[1] != (long)LENGTH(tags)) {
+		XFree(p);
+		return;
+	}
+	nmons = st[2];
+	loadedselmon = (int)st[3];
+	k = STATEHEAD;
+	for (i = 0; i < nmons && k + MONSTATE + TAGSTATE * LENGTH(tags) <= n; i++) {
+		for (m = mons; m && m->num != st[k]; m = m->next);
+		if (!m) {
+			k += MONSTATE + TAGSTATE * LENGTH(tags);
+			continue;
+		}
+		m->seltags = st[k + 1] & 1;
+		if (st[k + 2] & TAGMASK)
+			m->tagset[0] = st[k + 2] & TAGMASK;
+		if (st[k + 3] & TAGMASK)
+			m->tagset[1] = st[k + 3] & TAGMASK;
+		if (m->num >= 0 && m->num < (int)LENGTH(loadedsel))
+			loadedsel[m->num] = (Window)st[k + 4];
+		m->showbar = st[k + 5] ? 1 : 0;
+		updatebarpos(m);
+		k += MONSTATE;
+		for (t = 0; t < LENGTH(tags); t++, k += TAGSTATE) {
+			m->sellt[t] = st[k] & 1;
+			if (st[k + 1] >= 0 && st[k + 1] < (long)LENGTH(layouts))
+				m->lt[t * 2] = &layouts[st[k + 1]];
+			if (st[k + 2] >= 0 && st[k + 2] < (long)LENGTH(layouts))
+				m->lt[t * 2 + 1] = &layouts[st[k + 2]];
+			v = st[k + 3];
+			if (v >= 50 && v <= 950)
+				m->mfacts[t] = v / 1000.0;
+			if (st[k + 4] >= 0 && st[k + 4] < 64)
+				m->nmasters[t] = (int)st[k + 4];
+		}
+	}
+	XFree(p);
+}
+
+/* After scan(): give the focus back to the clients focused before. */
+static void
+restorefocus(void)
+{
+	Monitor *m;
+	Client *c;
+
+	for (m = mons; m; m = m->next) {
+		if (m->num < 0 || m->num >= (int)LENGTH(loadedsel) || !loadedsel[m->num])
+			continue;
+		if ((c = wintoclient(loadedsel[m->num])) && c->mon == m && ISVISIBLE(c)) {
+			detachstack(c);
+			attachstack(c);
+			m->sel = c;
+		}
+	}
+	for (m = mons; m && m->num != loadedselmon; m = m->next);
+	if (m)
+		selmon = m;
+	focus(selmon->sel);
+	arrange(NULL);
+}
+
 Monitor *
 recttomon(int x, int y, int w, int h)
 {
@@ -3069,15 +3319,66 @@ restack(Monitor *m)
 	outlineupdate();
 }
 
+/* SIGHUP restarts dwm in place, SIGTERM/SIGINT quit through cleanup(), so
+ * clients are reparented back to the root and keep their state. The handler
+ * only records the signal and wakes run() through a self-pipe. */
+static void
+sighandler(int sig)
+{
+	int saved = errno;
+
+	pendingsig = sig;
+	if (sigpipe[1] != -1 && write(sigpipe[1], "", 1) == -1) {
+		/* pipe full: a wake-up is already pending */
+	}
+	errno = saved;
+}
+
+static void
+handlesignals(void)
+{
+	int sig = pendingsig;
+
+	pendingsig = 0;
+	if (sig == SIGHUP)
+		restart(NULL);
+	else if (sig == SIGTERM || sig == SIGINT)
+		quit(NULL);
+}
+
 void
 run(void)
 {
 	XEvent ev;
+	fd_set fds;
+	char buf[64];
+	int xfd = ConnectionNumber(dpy), maxfd;
+
 	/* main event loop */
 	XSync(dpy, False);
-	while (running && !XNextEvent(dpy, &ev))
-		if (handler[ev.type])
-			handler[ev.type](&ev); /* call handler */
+	maxfd = MAX(xfd, sigpipe[0]);
+	while (running) {
+		while (running && XPending(dpy)) {
+			XNextEvent(dpy, &ev);
+			if (handler[ev.type])
+				handler[ev.type](&ev); /* call handler */
+		}
+		if (pendingsig)
+			handlesignals();
+		if (!running)
+			break;
+		FD_ZERO(&fds);
+		FD_SET(xfd, &fds);
+		if (sigpipe[0] != -1)
+			FD_SET(sigpipe[0], &fds);
+		if (select(maxfd + 1, &fds, NULL, NULL, NULL) == -1) {
+			if (errno == EINTR)
+				continue;
+			die("dwm: select:");
+		}
+		if (sigpipe[0] != -1 && FD_ISSET(sigpipe[0], &fds))
+			while (read(sigpipe[0], buf, sizeof buf) > 0);
+	}
 }
 
 void
@@ -3088,6 +3389,11 @@ scan(void)
 	XWindowAttributes wa;
 
 	if (XQueryTree(dpy, root, &d1, &d2, &wins, &num)) {
+		Window *cand = ecalloc(num ? num : 1, sizeof(Window));
+		long *order = ecalloc(num ? num : 1, sizeof(long)), st[CLIENTSTATE], to;
+		unsigned int n = 0, j;
+		Window tw;
+
 		for (i = 0; i < num; i++) {
 			if (!XGetWindowAttributes(dpy, wins[i], &wa)
 			|| wa.override_redirect || XGetTransientForHint(dpy, wins[i], &d1))
@@ -3096,9 +3402,23 @@ scan(void)
 			 * unmapped when its frame was destroyed (dwm restart). Manage
 			 * it so it gets a frame/title and is mapped again. */
 			if (wa.map_state == IsViewable || getstate(wins[i]) == IconicState
-			|| getstate(wins[i]) == NormalState)
-				manage(wins[i], &wa, 1);
+			|| getstate(wins[i]) == NormalState) {
+				cand[n] = wins[i];
+				order[n++] = readclientstate(wins[i], st) ? st[4] : LONG_MAX;
+			}
 		}
+		/* attach() prepends, so manage the last client of the saved order
+		 * first; clients without a saved order go to the end. */
+		for (i = 1; i < n; i++)
+			for (j = i; j > 0 && order[j - 1] < order[j]; j--) {
+				to = order[j]; order[j] = order[j - 1]; order[j - 1] = to;
+				tw = cand[j]; cand[j] = cand[j - 1]; cand[j - 1] = tw;
+			}
+		for (i = 0; i < n; i++)
+			if (XGetWindowAttributes(dpy, cand[i], &wa))
+				manage(cand[i], &wa, 1);
+		free(cand);
+		free(order);
 		for (i = 0; i < num; i++) { /* now the transients */
 			if (!XGetWindowAttributes(dpy, wins[i], &wa))
 				continue;
@@ -3238,8 +3558,10 @@ setlayout(const Arg *arg)
 	snprintf(selmon->ltsymbol, sizeof(selmon->ltsymbol), "%s", selmon->lt[slot]->symbol);
 	if (selmon->sel)
 		arrange(selmon);
-	else
+	else {
 		drawbar(selmon);
+		savestate();
+	}
 }
 
 /* arg > 1.0 will set mfact absolutely */
@@ -3447,6 +3769,20 @@ setup(void)
 	/* clean up any zombies (inherited from .xinitrc etc) immediately */
 	while (waitpid(-1, NULL, WNOHANG) > 0);
 
+	/* SIGHUP restarts, SIGTERM/SIGINT quit cleanly (see sighandler()) */
+	if (pipe(sigpipe) == -1)
+		die("dwm: pipe:");
+	for (i = 0; i < 2; i++) {
+		fcntl(sigpipe[i], F_SETFD, FD_CLOEXEC);
+		fcntl(sigpipe[i], F_SETFL, fcntl(sigpipe[i], F_GETFL) | O_NONBLOCK);
+	}
+	sigemptyset(&sa.sa_mask);
+	sa.sa_flags = SA_RESTART;
+	sa.sa_handler = sighandler;
+	sigaction(SIGHUP, &sa, NULL);
+	sigaction(SIGTERM, &sa, NULL);
+	sigaction(SIGINT, &sa, NULL);
+
 	/* init screen */
 	screen = DefaultScreen(dpy);
 	sw = DisplayWidth(dpy, screen);
@@ -3479,6 +3815,12 @@ setup(void)
 	netatom[NetClientList] = XInternAtom(dpy, "_NET_CLIENT_LIST", False);
 	netatom[NetDwmTab] = XInternAtom(dpy, "_DWM_TAB", False);
 	netatom[NetWmIcon] = XInternAtom(dpy, "_NET_WM_ICON", False);
+	netatom[NetWMDesktop] = XInternAtom(dpy, "_NET_WM_DESKTOP", False);
+	netatom[NetCurrentDesktop] = XInternAtom(dpy, "_NET_CURRENT_DESKTOP", False);
+	netatom[NetNumberOfDesktops] = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
+	netatom[NetDesktopNames] = XInternAtom(dpy, "_NET_DESKTOP_NAMES", False);
+	dwmatom[DwmClientState] = XInternAtom(dpy, "_DWM_CLIENT_STATE", False);
+	dwmatom[DwmState] = XInternAtom(dpy, "_DWM_STATE", False);
 	xatom[Manager] = XInternAtom(dpy, "MANAGER", False);
 	xatom[Xembed] = XInternAtom(dpy, "_XEMBED", False);
 	xatom[XembedInfo] = XInternAtom(dpy, "_XEMBED_INFO", False);
@@ -3490,6 +3832,8 @@ setup(void)
 	scheme = ecalloc(LENGTH(colors), sizeof(Clr *));
 	for (i = 0; i < LENGTH(colors); i++)
 		scheme[i] = drw_scm_create(drw, colors[i], 3);
+	/* monitors' tags/layouts from a previous dwm (restart) */
+	loadstate();
 	/* init focus outline */
 	outlinecreate();
 	/* init system tray */
@@ -3503,12 +3847,37 @@ setup(void)
 		PropModeReplace, (unsigned char *) &wmcheckwin, 1);
 	XChangeProperty(dpy, wmcheckwin, netatom[NetWMName], utf8string, 8,
 		PropModeReplace, (unsigned char *) "dwm", 3);
+	/* the session scripts signal this pid (restart/exit) */
+	{
+		long pid = getpid();
+
+		XChangeProperty(dpy, wmcheckwin, XInternAtom(dpy, "_NET_WM_PID", False),
+			XA_CARDINAL, 32, PropModeReplace, (unsigned char *)&pid, 1);
+	}
 	XChangeProperty(dpy, root, netatom[NetWMCheck], XA_WINDOW, 32,
 		PropModeReplace, (unsigned char *) &wmcheckwin, 1);
 	/* EWMH support per view */
 	XChangeProperty(dpy, root, netatom[NetSupported], XA_ATOM, 32,
 		PropModeReplace, (unsigned char *) netatom, NetLast);
 	XDeleteProperty(dpy, root, netatom[NetClientList]);
+	/* EWMH desktops: one per tag */
+	{
+		long ndesk = LENGTH(tags);
+		char names[512];
+		size_t len = 0, l;
+
+		XChangeProperty(dpy, root, netatom[NetNumberOfDesktops], XA_CARDINAL, 32,
+			PropModeReplace, (unsigned char *)&ndesk, 1);
+		for (i = 0; i < (int)LENGTH(tags); i++) {
+			l = strlen(tags[i]) + 1;
+			if (len + l > sizeof names)
+				break;
+			memcpy(names + len, tags[i], l);
+			len += l;
+		}
+		XChangeProperty(dpy, root, netatom[NetDesktopNames], utf8string, 8,
+			PropModeReplace, (unsigned char *)names, len);
+	}
 	/* select events */
 	wa.cursor = cursor[CurNormal]->cursor;
 	wa.event_mask = SubstructureRedirectMask|SubstructureNotifyMask
@@ -3849,6 +4218,12 @@ unmanage(Client *c, int destroyed)
 		}
 		XRemoveFromSaveSet(dpy, c->win);
 		XSelectInput(dpy, c->win, NoEventMask);
+		/* EWMH: remove _NET_WM_DESKTOP when the window is withdrawn,
+		 * keep it when the WM shuts down (restart restores from it). */
+		if (!cleaningup) {
+			XDeleteProperty(dpy, c->win, netatom[NetWMDesktop]);
+			XDeleteProperty(dpy, c->win, dwmatom[DwmClientState]);
+		}
 		XUngrabButton(dpy, AnyButton, AnyModifier, c->win);
 		setclientstate(c, WithdrawnState);
 		XSync(dpy, False);
@@ -4399,8 +4774,14 @@ main(int argc, char *argv[])
 		die("pledge");
 #endif /* __OpenBSD__ */
 	scan();
+	stateready = 1;
+	restorefocus();
 	run();
 	cleanup();
 	XCloseDisplay(dpy);
+	if (restartwm) {
+		execvp(argv[0], argv);
+		die("dwm: restart: execvp '%s' failed:", argv[0]);
+	}
 	return EXIT_SUCCESS;
 }

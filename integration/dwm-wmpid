@@ -1,0 +1,11 @@
+#!/bin/sh
+# Print the pid of the dwm managing $DISPLAY (from _NET_SUPPORTING_WM_CHECK
+# -> _NET_WM_PID), so the session scripts never signal another dwm (nested
+# Xephyr, another user, another display).
+win=$(xprop -root -notype _NET_SUPPORTING_WM_CHECK 2>/dev/null \
+	| sed -n 's/.*# *\(0x[0-9a-fA-F]*\).*/\1/p')
+[ -n "$win" ] || exit 1
+pid=$(xprop -id "$win" -notype _NET_WM_PID 2>/dev/null \
+	| sed -n 's/.* = *\([0-9][0-9]*\).*/\1/p')
+[ -n "$pid" ] || exit 1
+echo "$pid"

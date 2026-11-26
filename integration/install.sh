@@ -14,11 +14,13 @@ install -m755 "$here/autostart.sh"  "$dest/autostart.sh"
 install -m755 "$here/dwm-clock"     "$dest/dwm-clock"
 install -m755 "$here/dwm-restart"   "$dest/dwm-restart"
 install -m755 "$here/dwm-exit"      "$dest/dwm-exit"
+install -m755 "$here/dwm-wmpid"     "$dest/dwm-wmpid"
 install -m755 "$here/xsession"      "$dest/xsession"
 
 # dwm spawns these two by name (config.h), so expose them on PATH.
 ln -sf "$dest/dwm-restart" "$bindir/dwm-restart"
 ln -sf "$dest/dwm-exit"    "$bindir/dwm-exit"
+ln -sf "$dest/dwm-wmpid"   "$bindir/dwm-wmpid"
 ln -sf "$dest/dwm-clock"   "$bindir/dwm-clock"
 ln -sf "$dest/dwm-session" "$bindir/dwm-session"
 
@@ -41,6 +43,7 @@ Installed:
   $dest/dwm-clock
   $dest/dwm-restart
   $dest/dwm-exit
+  $dest/dwm-wmpid
   $dest/xsession
   $HOME/.local/share/xsessions/dwm.desktop
 

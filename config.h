@@ -101,7 +101,6 @@ static const char *termcmd[]  = { "st", NULL };
 static const char *filecmd[]  = { "pcmanfm", NULL };
 static const char *shotcmd[]  = { "flameshot", "gui", NULL };
 static const char *launchercmd[] = { "launcher-rs", NULL };
-static const char *restartcmd[] = { "dwm-restart", NULL };
 static const char *exitcmd[]  = { "dwm-exit", NULL };
 static const char *calendarcmd[] = { "/bin/sh", "-c",
 	"$HOME/.config/polybar/scripts/toggle-calendar.sh", NULL };
@@ -144,9 +143,10 @@ static const Key keys[] = {
 	/* i3: $mod+r / $mod+m binding modes */
 	{ MODKEY,                       XK_r,      setmode,        {.i = ModeResize } },
 	{ MODKEY,                       XK_m,      setmode,        {.i = ModeMove } },
-	/* i3: $mod+Shift+c reload, $mod+Shift+r restart (dwm re-execs) */
-	{ MODKEY|ShiftMask,             XK_c,      spawn,          {.v = restartcmd } },
-	{ MODKEY|ShiftMask,             XK_r,      spawn,          {.v = restartcmd } },
+	/* i3: $mod+Shift+c reload, $mod+Shift+r restart (dwm re-execs itself,
+	 * keeping tags, layouts, order and focus) */
+	{ MODKEY|ShiftMask,             XK_c,      restart,        {0} },
+	{ MODKEY|ShiftMask,             XK_r,      restart,        {0} },
 	/* i3: $mod+Shift+e exit (confirmation dialog) */
 	{ MODKEY|ShiftMask,             XK_e,      spawn,          {.v = exitcmd } },
 	/* i3: $mod+1..0 and $mod+Shift+1..0 (10 tags) */
