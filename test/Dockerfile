@@ -4,7 +4,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
       build-essential pkg-config \
-      libx11-dev libxext-dev libxft-dev libxinerama-dev libfontconfig1-dev \
+      libx11-dev libxext-dev libxft-dev libxinerama-dev libfontconfig1-dev libpng-dev \
       xvfb x11-utils x11-xserver-utils x11-apps procps xdotool imagemagick fonts-dejavu-core \
  && rm -rf /var/lib/apt/lists/*
 

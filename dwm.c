@@ -47,6 +47,7 @@
 #include <X11/Xft/Xft.h>
 
 #include "drw.h"
+#include "icontheme.h"
 #include "util.h"
 
 /* macros */
@@ -1401,11 +1402,54 @@ readicon(Window w)
 	return icon;
 }
 
+/* Theme icons by class/instance, looked up once per class: the lookup
+ * touches the disk. A NULL icon is cached too. */
+typedef struct ThemeIcon ThemeIcon;
+struct ThemeIcon {
+	char key[257];
+	uint32_t *icon;
+	ThemeIcon *next;
+};
+static ThemeIcon *themeicons;
+
+static uint32_t *
+themeicon(Client *c)
+{
+	ThemeIcon *t;
+	unsigned long *argb;
+	uint32_t *icon;
+	char key[257];
+	int w, h;
+
+	if (!c->class[0] && !c->instance[0])
+		return NULL;
+	snprintf(key, sizeof key, "%s\n%s", c->class, c->instance);
+	for (t = themeicons; t && strcmp(t->key, key); t = t->next);
+	if (!t) {
+		t = ecalloc(1, sizeof *t);
+		snprintf(t->key, sizeof t->key, "%s", key);
+		if ((argb = iconthemelookup(c->class, c->instance, &w, &h))) {
+			t->icon = ecalloc(ICONSIZE * ICONSIZE, sizeof(uint32_t));
+			scaleicon(argb, w, h, t->icon);
+			free(argb);
+		}
+		t->next = themeicons;
+		themeicons = t;
+	}
+	if (!t->icon)
+		return NULL;
+	icon = ecalloc(ICONSIZE * ICONSIZE, sizeof(uint32_t));
+	memcpy(icon, t->icon, ICONSIZE * ICONSIZE * sizeof(uint32_t));
+	return icon;
+}
+
+/* _NET_WM_ICON, or the icon theme's icon for the window class. */
 static void
 updateicon(Client *c)
 {
 	freeicon(c);
-	c->icon = readicon(c->win);
+	if (!(c->icon = readicon(c->win)))
+		c->icon = themeicon(c);
 	c->taskcap = -1;
 }
 
@@ -2954,10 +2998,7 @@ propertynotify(XEvent *e)
 	if ((ev->window == root) && (ev->atom == XA_WM_NAME))
 		updatestatus();
 	else if ((c = wintoclient(ev->window)) && ev->atom == netatom[NetWmIcon]) {
-		if (ev->state == PropertyDelete)
-			freeicon(c);
-		else
-			updateicon(c);
+		updateicon(c); /* deleted: the theme icon, if any */
 		drawclienttitles(c);
 		drawbar(c->mon);
 	}
@@ -3006,6 +3047,7 @@ propertynotify(XEvent *e)
 		}
 		if (ev->atom == XA_WM_CLASS) {
 			updateclass(c);
+			updateicon(c);
 			drawtitle(c, c == selmon->sel);
 			drawbar(c->mon);
 		}

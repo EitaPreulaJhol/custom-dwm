@@ -6,7 +6,7 @@ include config.mk
 INSTALL ?= install
 DESTDIR ?=
 
-SRC = drw.c dwm.c util.c
+SRC = drw.c dwm.c icontheme.c util.c
 OBJ = ${SRC:.c=.o}
 
 all: dwm
@@ -15,7 +15,8 @@ all: dwm
 	${CC} -c ${CFLAGS} $<
 
 ${OBJ}: config.mk
-dwm.o: config.h drw.h util.h
+dwm.o: config.h drw.h icontheme.h util.h
+icontheme.o: icontheme.h util.h
 drw.o: drw.h util.h
 util.o: util.h
 
@@ -28,7 +29,7 @@ clean:
 dist: clean
 	mkdir -p dwm-${VERSION}
 	cp -R LICENSE Makefile README.md config.h config.mk\
-		dwm.1 drw.h util.h ${SRC} transient.c patches integration \
+		dwm.1 drw.h icontheme.h util.h ${SRC} transient.c patches integration \
 		dwm-${VERSION}
 	tar -cf dwm-${VERSION}.tar dwm-${VERSION}
 	gzip dwm-${VERSION}.tar
