@@ -70,6 +70,13 @@
 #define TAGSTATE                5  /* sellt, lt[2], mfact, nmaster */
 #define CLIENTSTATE             5  /* tags, mon, floating, cfact, order */
 
+/* _NET_WM_MOVERESIZE directions */
+#define MOVERESIZE_SIZE_TOPLEFT      0
+#define MOVERESIZE_SIZE_LEFT         7
+#define MOVERESIZE_MOVE              8
+#define MOVERESIZE_SIZE_KEYBOARD     9
+#define MOVERESIZE_MOVE_KEYBOARD     10
+
 #define SYSTEM_TRAY_REQUEST_DOCK    0
 /* XEMBED messages */
 #define XEMBED_EMBEDDED_NOTIFY      0
@@ -93,8 +100,10 @@ enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMFullscreen, NetActiveWindow, NetWMWindowType,
        NetWMWindowTypeDialog, NetClientList, NetDwmTab, NetWmIcon,
        NetWMDesktop, NetCurrentDesktop, NetNumberOfDesktops, NetDesktopNames,
-       NetLast }; /* EWMH atoms */
-enum { DwmClientState, DwmState, DwmLast }; /* dwm restart state */
+       NetCloseWindow, NetWMMoveResize, NetFrameExtents, NetRequestFrameExtents,
+       NetWMStateDemandsAttention, NetWMWindowTypeUtility, NetWMWindowTypeSplash,
+       NetWMWindowTypeToolbar, NetWMWindowTypeNotification, NetLast }; /* EWMH atoms */
+enum { DwmClientState, DwmState, MotifWMHints, DwmLast }; /* non-EWMH atoms */
 enum { Manager, Xembed, XembedInfo, XLast }; /* Xembed atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
 enum { ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkBorder, ClkTitleBar, ClkTab, ClkRootWin, ClkLast }; /* clicks */
@@ -135,6 +144,12 @@ struct Client {
 	unsigned int tags;
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
 	int mapped; /* frame currently mapped by showhide() */
+	int notitle; /* _MOTIF_WM_HINTS: no decorations (client-side ones) */
+	int th; /* title bar height currently applied (0 = none) */
+	int titlemapped;
+	long extents[4]; /* last _NET_FRAME_EXTENTS published */
+	int argb; /* 32-bit client: the frame uses its visual */
+	Colormap cmap; /* frame colormap for argb clients */
 	uint32_t *icon; /* 16x16 premultiplied ARGB, NULL = no icon */
 	/* taskbar cache: title truncated to taskcap px and the item width
 	 * without the focus frame; taskcap < 0 = invalid */
@@ -262,6 +277,7 @@ static void grabkeys(void);
 static void incnmaster(const Arg *arg);
 static void keypress(XEvent *e);
 static void killclient(const Arg *arg);
+static void closeclient(Client *c);
 static void manage(Window w, XWindowAttributes *wa, int adopt);
 static void mappingnotify(XEvent *e);
 static void maprequest(XEvent *e);
@@ -271,6 +287,7 @@ static void motionnotify(XEvent *e);
 static void movedir(const Arg *arg);
 static void movemouse(const Arg *arg);
 static void dragmove(Client *c);
+static void dragresize(Client *c, int anchor);
 static void swapclients(Monitor *m, Client *a, Client *b);
 static Client *nexttiled(Client *c);
 static int outlineadd(XRectangle *rects, int n, int max, int x, int y, int w, int h);
@@ -415,6 +432,25 @@ struct NumTags { char limitexceeded[LENGTH(tags) > 31 ? -1 : 1]; };
 
 /* function implementations */
 
+/* Title bar height for c if it is (not) floating: none when fullscreen or
+ * when the client draws its own decorations, except as the tiled member of
+ * a tabbed layout, whose title bar is the shared tab strip. */
+static int
+titlehfor(Client *c, int floating)
+{
+	if (c->isfullscreen)
+		return 0;
+	if (c->notitle && !(c->mon && curlayout(c->mon)->arrange == tabbed && !floating))
+		return 0;
+	return titleheight;
+}
+
+static int
+titleh(Client *c)
+{
+	return titlehfor(c, c->isfloating);
+}
+
 /* Room in m's taskbar/tab caches for every client on m (plus the end
  * marker of taskx). There is no fixed limit on the number of windows. */
 static void
@@ -435,6 +471,67 @@ ensuremoncap(Monitor *m)
 	m->tabx = erealloc(m->tabx, n * sizeof *m->tabx);
 	m->tabw = erealloc(m->tabw, n * sizeof *m->tabw);
 	m->listcap = n;
+}
+
+/* A scheme pixel for c's frame: opaque alpha on a 32-bit (argb) frame. */
+static unsigned long
+framepixel(Client *c, unsigned long pixel)
+{
+	return c->argb ? pixel | 0xff000000UL : pixel;
+}
+
+static void
+setframeborder(Client *c, int schemeidx)
+{
+	XSetWindowBorder(dpy, c->frame, framepixel(c, scheme[schemeidx][ColBorder].pixel));
+}
+
+static void
+updatemotifhints(Client *c)
+{
+	Atom type;
+	int format;
+	unsigned long n, after;
+	unsigned char *p = NULL;
+	long *h;
+
+	c->notitle = 0;
+	if (XGetWindowProperty(dpy, c->win, dwmatom[MotifWMHints], 0, 5, False,
+		AnyPropertyType, &type, &format, &n, &after, &p) != Success || !p)
+		return;
+	h = (long *)p;
+	/* flags & MWM_HINTS_DECORATIONS, decorations without ALL or TITLE */
+	if (format == 32 && n >= 3 && (h[0] & 2) && !(h[2] & (1 | 8)))
+		c->notitle = 1;
+	XFree(p);
+}
+
+/* _NET_WM_STATE as dwm maintains it: fullscreen and demands-attention. */
+static void
+updatenetstate(Client *c)
+{
+	Atom st[2];
+	int n = 0;
+
+	if (c->isfullscreen)
+		st[n++] = netatom[NetWMFullscreen];
+	if (c->isurgent)
+		st[n++] = netatom[NetWMStateDemandsAttention];
+	XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
+		PropModeReplace, (unsigned char *)st, n);
+}
+
+static void
+setframeextents(Window w, int bw, int th, long *cache)
+{
+	long ext[4] = { bw, bw, bw + th, bw };
+
+	if (cache && !memcmp(cache, ext, sizeof ext))
+		return;
+	if (cache)
+		memcpy(cache, ext, sizeof ext);
+	XChangeProperty(dpy, w, netatom[NetFrameExtents], XA_CARDINAL, 32,
+		PropModeReplace, (unsigned char *)ext, 4);
 }
 
 void
@@ -490,7 +587,7 @@ applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
 	int baseismin;
 	Monitor *m = c->mon;
 	int bw = c->bw;
-	int th = c->isfullscreen ? 0 : titleheight;
+	int th = titleh(c);
 	int cw, ch;
 
 	/* *w and *h are the frame's outer size (border + title + client). */
@@ -804,13 +901,84 @@ clientmessage(XEvent *e)
 		return;
 	}
 
+	if (cme->message_type == netatom[NetRequestFrameExtents]) {
+		/* asked before the window is mapped: the default frame */
+		if (!c)
+			setframeextents(cme->window, borderpx, titleheight, NULL);
+		return;
+	}
+	if (cme->message_type == netatom[NetCurrentDesktop]) {
+		Arg a;
+
+		/* a pager asking for the current desktop must not trigger
+		 * the back-and-forth of view() */
+		if (cme->data.l[0] >= 0 && cme->data.l[0] < (long)LENGTH(tags)
+		&& (1u << cme->data.l[0]) != selmon->tagset[selmon->seltags]) {
+			a.ui = 1u << cme->data.l[0];
+			view(&a);
+		}
+		return;
+	}
 	if (!c)
 		return;
+	if (cme->message_type == netatom[NetWMDesktop]) {
+		unsigned long d = (unsigned long)cme->data.l[0] & 0xFFFFFFFFUL;
+		unsigned int newtags = d == 0xFFFFFFFFUL ? TAGMASK
+			: d < LENGTH(tags) ? 1u << d : 0;
+
+		if (newtags && newtags != c->tags) {
+			c->tags = newtags;
+			focus(NULL);
+			arrange(c->mon);
+		}
+		return;
+	}
+	if (cme->message_type == netatom[NetCloseWindow]) {
+		closeclient(c);
+		return;
+	}
+	if (cme->message_type == netatom[NetWMMoveResize]) {
+		long dir = cme->data.l[2];
+		Arg a;
+
+		if (c->isfullscreen || !ISVISIBLE(c))
+			return;
+		if (c != selmon->sel) {
+			focus(c);
+			restack(c->mon);
+		}
+		if (dir == MOVERESIZE_MOVE)
+			dragmove(c);
+		else if (dir >= MOVERESIZE_SIZE_TOPLEFT && dir <= MOVERESIZE_SIZE_LEFT) {
+			static const int anchors[] = {
+				RTop|RLeft, RTop, RTop|RRight, RRight,
+				RBottom|RRight, RBottom, RBottom|RLeft, RLeft
+			};
+			dragresize(c, anchors[dir]);
+		} else if (dir == MOVERESIZE_SIZE_KEYBOARD || dir == MOVERESIZE_MOVE_KEYBOARD) {
+			a.i = dir == MOVERESIZE_SIZE_KEYBOARD ? ModeResize : ModeMove;
+			if (wmmode != a.i)
+				setmode(&a);
+		}
+		return;
+	}
 	if (cme->message_type == netatom[NetWMState]) {
-		if (cme->data.l[1] == netatom[NetWMFullscreen]
-		|| cme->data.l[2] == netatom[NetWMFullscreen])
+		Atom a1 = (Atom)cme->data.l[1], a2 = (Atom)cme->data.l[2];
+
+		if (a1 == netatom[NetWMFullscreen] || a2 == netatom[NetWMFullscreen])
 			setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD    */
 				|| (cme->data.l[0] == 2 /* _NET_WM_STATE_TOGGLE */ && !c->isfullscreen)));
+		if (a1 == netatom[NetWMStateDemandsAttention]
+		|| a2 == netatom[NetWMStateDemandsAttention]) {
+			int urg = cme->data.l[0] == 1
+				|| (cme->data.l[0] == 2 && !c->isurgent);
+
+			/* the focused window never needs attention */
+			if (urg != c->isurgent && !(urg && c == selmon->sel)) {
+				seturgent(c, urg);
+				drawbars();
+			}
+		}
 	} else if (cme->message_type == netatom[NetActiveWindow]) {
 		/* i3's focus_on_window_activation smart: focus a window that is
 		 * on a visible tag, mark any other one urgent. */
@@ -828,7 +996,7 @@ void
 configure(Client *c)
 {
 	XConfigureEvent ce;
-	int th = c->isfullscreen ? 0 : titleheight;
+	int th = c->th;
 
 	ce.type = ConfigureNotify;
 	ce.display = dpy;
@@ -886,9 +1054,9 @@ configurerequest(XEvent *e)
 		if (ev->window != c->win) {
 			/* request from our own frame/title; ignore */
 		} else if (c->isfloating || !curlayout(c->mon)->arrange) {
-			int th = c->isfullscreen ? 0 : titleheight;
+			int th = titleh(c);
 			int cw = c->w - 2 * c->bw;
-			int ch = c->h - 2 * c->bw - th;
+			int ch = c->h - 2 * c->bw - c->th;
 
 			if (ev->value_mask & CWWidth)
 				cw = ev->width;
@@ -1317,7 +1485,7 @@ void
 drawtitle(Client *c, int focused)
 {
 	char raw[512], title[512];
-	int th = c->isfullscreen ? 0 : titleheight;
+	int th = c->th;
 	int tw, pad = 8, avail, textw, iconx, textx;
 	int urgent = c->isurgent;
 	unsigned int seltitle = urgent ? SchemeUrg : focused ? SchemeSel : SchemeNorm;
@@ -1691,8 +1859,7 @@ focus(Client *c)
 		detachstack(c);
 		attachstack(c);
 		grabbuttons(c, 1);
-		XSetWindowBorder(dpy, c->frame, scheme[c->isurgent ? SchemeUrg
-			: SchemeSel][ColBorder].pixel);
+		setframeborder(c, c->isurgent ? SchemeUrg : SchemeSel);
 		selmon->sel = c;
 		if (curlayout(c->mon)->arrange == tabbed && !c->isfloating)
 			c->mon->tabsel = c;
@@ -2093,20 +2260,25 @@ keypress(XEvent *e)
 }
 
 void
-killclient(const Arg *arg)
+closeclient(Client *c)
 {
-	if (!selmon->sel)
+	if (!c)
 		return;
-
-	if (!sendevent(selmon->sel->win, wmatom[WMDelete], NoEventMask, wmatom[WMDelete], CurrentTime, 0 , 0, 0)) {
+	if (!sendevent(c->win, wmatom[WMDelete], NoEventMask, wmatom[WMDelete], CurrentTime, 0 , 0, 0)) {
 		XGrabServer(dpy);
 		XSetErrorHandler(xerrordummy);
 		XSetCloseDownMode(dpy, DestroyAll);
-		XKillClient(dpy, selmon->sel->win);
+		XKillClient(dpy, c->win);
 		XSync(dpy, False);
 		XSetErrorHandler(xerror);
 		XUngrabServer(dpy);
 	}
+}
+
+void
+killclient(const Arg *arg)
+{
+	closeclient(selmon->sel);
 }
 
 void
@@ -2115,13 +2287,16 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 	Client *c, *t = NULL;
 	Window trans = None;
 	XSetWindowAttributes fwa, twa;
-	int th = titleheight;
+	int th, depth = DefaultDepth(dpy, screen);
+	Visual *visual = DefaultVisual(dpy, screen);
+	unsigned long fmask = CWOverrideRedirect|CWBackPixel|CWBorderPixel|CWEventMask;
 	long st[CLIENTSTATE];
 
 	c = ecalloc(1, sizeof(Client));
 	c->win = w;
 	c->cfact = 1.0;
 	c->taskcap = -1;
+	c->extents[0] = -1; /* nothing published yet */
 	c->oldbw = wa->border_width;
 	c->bw = borderpx;
 
@@ -2153,6 +2328,10 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 		if (st[3] > 0)
 			c->cfact = st[3] / 1000.0;
 	}
+	updatemotifhints(c);
+	updatesizehints(c);
+	th = titlehfor(c, c->isfloating || trans != None || c->isfixed);
+	c->th = th;
 
 	/* The frame is the layout unit: X border + title bar + client. */
 	c->x = c->oldx = wa->x + wa->border_width - borderpx;
@@ -2176,20 +2355,33 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 	c->natw = c->w;
 	c->nath = c->h;
 
+	/* A 32-bit (ARGB) client keeps its alpha channel only inside a frame
+	 * of the same depth and visual; everything else uses the defaults. */
+	if (wa->depth == 32 && wa->visual) {
+		c->argb = 1;
+		depth = 32;
+		visual = wa->visual;
+		c->cmap = XCreateColormap(dpy, root, visual, AllocNone);
+		fwa.colormap = c->cmap;
+		fmask |= CWColormap;
+	}
 	fwa.override_redirect = True;
-	fwa.background_pixel = scheme[SchemeNorm][ColBorder].pixel;
-	fwa.border_pixel = scheme[SchemeNorm][ColBorder].pixel;
+	fwa.background_pixel = framepixel(c, scheme[SchemeNorm][ColBorder].pixel);
+	fwa.border_pixel = framepixel(c, scheme[SchemeNorm][ColBorder].pixel);
 	fwa.event_mask = ButtonPressMask|SubstructureRedirectMask;
 	c->frame = XCreateWindow(dpy, root, c->x, c->y,
 		c->w - 2 * c->bw, c->h - 2 * c->bw, c->bw,
-		DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
-		CWOverrideRedirect|CWBackPixel|CWBorderPixel|CWEventMask, &fwa);
+		depth, InputOutput, visual, fmask, &fwa);
 
+	/* The title bar is drawn by drw at the default depth. */
 	twa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
+	twa.border_pixel = 0;
+	twa.colormap = DefaultColormap(dpy, screen);
 	twa.event_mask = ButtonPressMask|ExposureMask;
-	c->title = XCreateWindow(dpy, c->frame, 0, 0, c->w - 2 * c->bw, th, 0,
-		DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
-		CWBackPixel|CWEventMask, &twa);
+	c->title = XCreateWindow(dpy, c->frame, 0, 0, c->w - 2 * c->bw,
+		MAX(th, 1), 0, DefaultDepth(dpy, screen), InputOutput,
+		DefaultVisual(dpy, screen),
+		CWBackPixel|CWBorderPixel|CWColormap|CWEventMask, &twa);
 	XDefineCursor(dpy, c->title, cursor[CurNormal]->cursor);
 
 	XAddToSaveSet(dpy, w);
@@ -2225,8 +2417,11 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 	c->mon->sel = c;
 
 	XMapWindow(dpy, c->win);
-	if (!c->isfullscreen)
+	if (c->th > 0 && !c->isfullscreen) {
 		XMapWindow(dpy, c->title);
+		c->titlemapped = 1;
+	}
+	setframeextents(c->win, c->bw, c->th, c->extents);
 	arrange(c->mon);
 	drawtitle(c, c == selmon->sel);
 	focus(NULL);
@@ -2785,7 +2980,7 @@ propertynotify(XEvent *e)
 			 * center them at the hinted size. */
 			if (c->isfixed) {
 				int fw = MIN(c->minw + 2 * c->bw, c->mon->ww);
-				int fh = MIN(c->minh + 2 * c->bw + titleheight, c->mon->wh);
+				int fh = MIN(c->minh + 2 * c->bw + titlehfor(c, 1), c->mon->wh);
 
 				if (!c->isfloating) {
 					c->isfloating = 1;
@@ -2799,8 +2994,8 @@ propertynotify(XEvent *e)
 			break;
 		case XA_WM_HINTS:
 			updatewmhints(c);
-			XSetWindowBorder(dpy, c->frame, scheme[c->isurgent ? SchemeUrg
-				: c == selmon->sel ? SchemeSel : SchemeNorm][ColBorder].pixel);
+			setframeborder(c, c->isurgent ? SchemeUrg
+				: c == selmon->sel ? SchemeSel : SchemeNorm);
 			drawclienttitles(c);
 			drawbars();
 			break;
@@ -2816,6 +3011,15 @@ propertynotify(XEvent *e)
 		}
 		if (ev->atom == netatom[NetWMWindowType])
 			updatewindowtype(c);
+		if (ev->atom == dwmatom[MotifWMHints]) {
+			int old = c->notitle;
+
+			updatemotifhints(c);
+			if (old != c->notitle) {
+				resize(c, c->x, c->y, c->w, c->h, 0);
+				arrange(c->mon);
+			}
+		}
 	}
 }
 
@@ -3061,6 +3265,15 @@ resize(Client *c, int x, int y, int w, int h, int interact)
 	/* A pure move (same size) must not re-apply size hints or the floating
 	 * maximum: doing so made the first mouse motion snap/resize the window.
 	 * Keep only the "do not lose the window off-screen" clamp. */
+	if (titleh(c) != c->th) {
+		/* the title bar appears/disappears (layout, floating, motif
+		 * hints): keep the client size, the frame absorbs the change */
+		if (w == c->w && h == c->h)
+			h += titleh(c) - c->th;
+		if (applysizehints(c, &x, &y, &w, &h, interact) || titleh(c) != c->th)
+			resizeclient(c, x, y, w, h);
+		return;
+	}
 	if (w == c->w && h == c->h) {
 		if (interact) {
 			if (x > sw)
@@ -3108,12 +3321,12 @@ void
 resizeclient(Client *c, int x, int y, int w, int h)
 {
 	XWindowChanges wc;
-	int th = c->isfullscreen ? 0 : titleheight;
+	int th = titleh(c);
 	int fw = MAX(1, w - 2 * c->bw);
 	int fh = MAX(1, h - 2 * c->bw);
 	int cw = fw;
 	int ch = MAX(1, fh - th);
-	int redraw = (w != c->w || h != c->h);
+	int redraw = (w != c->w || h != c->h || th != c->th);
 
 	c->oldx = c->x; c->x = wc.x = x;
 	c->oldy = c->y; c->y = wc.y = y;
@@ -3123,12 +3336,21 @@ resizeclient(Client *c, int x, int y, int w, int h)
 	wc.height = fh;
 	wc.border_width = c->bw;
 	XConfigureWindow(dpy, c->frame, CWX|CWY|CWWidth|CWHeight|CWBorderWidth, &wc);
+	c->th = th;
 	if (th > 0 && c->title) {
 		XMoveResizeWindow(dpy, c->title, 0, 0, fw, th);
+		if (!c->titlemapped) {
+			XMapWindow(dpy, c->title);
+			c->titlemapped = 1;
+		}
 		if (redraw)
 			drawtitle(c, c == selmon->sel);
+	} else if (c->title && c->titlemapped) {
+		XUnmapWindow(dpy, c->title);
+		c->titlemapped = 0;
 	}
 	XMoveResizeWindow(dpy, c->win, 0, th, cw, ch);
+	setframeextents(c->win, c->bw, th, c->extents);
 	configure(c);
 	XSync(dpy, False);
 	if (c == selmon->sel)
@@ -3151,14 +3373,22 @@ resizerequest(XEvent *e)
 void
 resizemouse(const Arg *arg)
 {
-	int x, y, ocx, ocy, ocw, och, nx, ny, nw, nh, anchor;
+	dragresize(selmon->sel, 0);
+}
+
+/* Resize c with the pointer from `anchor` (RLeft|RTop...), or, when it is
+ * 0, from the corner/edge nearest to the pointer. */
+void
+dragresize(Client *c, int anchor)
+{
+	int x, y, ocx, ocy, ocw, och, nx, ny, nw, nh, px, py;
+	int offx = 0, offy = 0, given = anchor != 0;
 	int dl, dr, dt, db, near_left, near_right, near_top, near_bottom, edges;
-	Client *c;
 	Monitor *m;
 	XEvent ev;
 	Time lasttime = 0;
 
-	if (!(c = selmon->sel))
+	if (!c)
 		return;
 	if (c->isfullscreen) /* no support resizing fullscreen windows by mouse */
 		return;
@@ -3182,7 +3412,9 @@ resizemouse(const Arg *arg)
 	near_top = dt <= 10;
 	near_bottom = db <= 10;
 	edges = near_left + near_right + near_top + near_bottom;
-	if (edges >= 2) {
+	if (anchor) {
+		/* given by _NET_WM_MOVERESIZE */
+	} else if (edges >= 2) {
 		anchor = (near_left ? RLeft : RRight) | (near_top ? RTop : RBottom);
 	} else if (edges == 1) {
 		anchor = near_left ? RLeft : near_right ? RRight : near_top ? RTop : RBottom;
@@ -3194,9 +3426,14 @@ resizemouse(const Arg *arg)
 	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
 		None, cursor[CurResize]->cursor, CurrentTime) != GrabSuccess)
 		return;
+	if (!buttonheld()) {
+		XUngrabPointer(dpy, CurrentTime);
+		return;
+	}
 
-	/* Put the pointer on the grabbed corner/edge so the first motion delta
-	 * starts from the opposite fixed edge. */
+	/* The moving edges follow the pointer at their current offset. A
+	 * dwm binding puts the pointer on the grabbed corner/edge first; a
+	 * client's _NET_WM_MOVERESIZE keeps it where the client's drag began. */
 	nx = x;
 	ny = y;
 	if (anchor & RLeft)
@@ -3207,7 +3444,11 @@ resizemouse(const Arg *arg)
 		ny = ocy;
 	else if (anchor & RBottom)
 		ny = ocy + och - 1;
-	XWarpPointer(dpy, None, root, 0, 0, 0, 0, nx, ny);
+	if (given) {
+		offx = nx - x;
+		offy = ny - y;
+	} else
+		XWarpPointer(dpy, None, root, 0, 0, 0, 0, nx, ny);
 
 	do {
 		XMaskEvent(dpy, MOUSEMASK|ExposureMask|SubstructureRedirectMask, &ev);
@@ -3226,17 +3467,19 @@ resizemouse(const Arg *arg)
 			ny = ocy;
 			nw = ocw;
 			nh = och;
+			px = ev.xmotion.x_root + offx;
+			py = ev.xmotion.y_root + offy;
 			if (anchor & RLeft) {
-				nx = ev.xmotion.x_root;
+				nx = px;
 				nw = ocx + ocw - nx;
 			} else if (anchor & RRight) {
-				nw = ev.xmotion.x_root - ocx + 1;
+				nw = px - ocx + 1;
 			}
 			if (anchor & RTop) {
-				ny = ev.xmotion.y_root;
+				ny = py;
 				nh = ocy + och - ny;
 			} else if (anchor & RBottom) {
-				nh = ev.xmotion.y_root - ocy + 1;
+				nh = py - ocy + 1;
 			}
 			if (nw < 1)
 				nw = 1;
@@ -3248,10 +3491,10 @@ resizemouse(const Arg *arg)
 					nx = ocx + ocw - (2 * c->bw + 1);
 				nw = 2 * c->bw + 1;
 			}
-			if (nh < 2 * c->bw + titleheight + 1) {
+			if (nh < 2 * c->bw + c->th + 1) {
 				if (anchor & RTop)
-					ny = ocy + och - (2 * c->bw + titleheight + 1);
-				nh = 2 * c->bw + titleheight + 1;
+					ny = ocy + och - (2 * c->bw + c->th + 1);
+				nh = 2 * c->bw + c->th + 1;
 			}
 			if (!c->isfloating && curlayout(c->mon)->arrange
 			&& (abs(nw - c->w) > snap || abs(nh - c->h) > snap)) {
@@ -3511,27 +3754,21 @@ void
 setfullscreen(Client *c, int fullscreen)
 {
 	if (fullscreen && !c->isfullscreen) {
-		XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
-			PropModeReplace, (unsigned char*)&netatom[NetWMFullscreen], 1);
 		c->isfullscreen = 1;
+		updatenetstate(c);
 		c->oldstate = c->isfloating;
 		c->oldbw = c->bw;
 		c->bw = 0;
 		c->isfloating = 1;
 		XSetWindowBorderWidth(dpy, c->frame, 0);
-		if (c->title)
-			XUnmapWindow(dpy, c->title);
 		resizeclient(c, c->mon->mx, c->mon->my, c->mon->mw, c->mon->mh);
 		XRaiseWindow(dpy, c->frame);
 	} else if (!fullscreen && c->isfullscreen) {
-		XChangeProperty(dpy, c->win, netatom[NetWMState], XA_ATOM, 32,
-			PropModeReplace, (unsigned char*)0, 0);
 		c->isfullscreen = 0;
+		updatenetstate(c);
 		c->isfloating = c->oldstate;
 		c->bw = c->oldbw;
 		XSetWindowBorderWidth(dpy, c->frame, c->bw);
-		if (c->title)
-			XMapWindow(dpy, c->title);
 		c->x = c->oldx;
 		c->y = c->oldy;
 		c->w = c->oldw;
@@ -3819,6 +4056,16 @@ setup(void)
 	netatom[NetCurrentDesktop] = XInternAtom(dpy, "_NET_CURRENT_DESKTOP", False);
 	netatom[NetNumberOfDesktops] = XInternAtom(dpy, "_NET_NUMBER_OF_DESKTOPS", False);
 	netatom[NetDesktopNames] = XInternAtom(dpy, "_NET_DESKTOP_NAMES", False);
+	netatom[NetCloseWindow] = XInternAtom(dpy, "_NET_CLOSE_WINDOW", False);
+	netatom[NetWMMoveResize] = XInternAtom(dpy, "_NET_WM_MOVERESIZE", False);
+	netatom[NetFrameExtents] = XInternAtom(dpy, "_NET_FRAME_EXTENTS", False);
+	netatom[NetRequestFrameExtents] = XInternAtom(dpy, "_NET_REQUEST_FRAME_EXTENTS", False);
+	netatom[NetWMStateDemandsAttention] = XInternAtom(dpy, "_NET_WM_STATE_DEMANDS_ATTENTION", False);
+	netatom[NetWMWindowTypeUtility] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_UTILITY", False);
+	netatom[NetWMWindowTypeSplash] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_SPLASH", False);
+	netatom[NetWMWindowTypeToolbar] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_TOOLBAR", False);
+	netatom[NetWMWindowTypeNotification] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_NOTIFICATION", False);
+	dwmatom[MotifWMHints] = XInternAtom(dpy, "_MOTIF_WM_HINTS", False);
 	dwmatom[DwmClientState] = XInternAtom(dpy, "_DWM_CLIENT_STATE", False);
 	dwmatom[DwmState] = XInternAtom(dpy, "_DWM_STATE", False);
 	xatom[Manager] = XInternAtom(dpy, "MANAGER", False);
@@ -3899,11 +4146,13 @@ seturgent(Client *c, int urg)
 	if (c->frame) {
 		int focused = c == selmon->sel;
 
-		XSetWindowBorder(dpy, c->frame, scheme[urg ? SchemeUrg
-			: focused ? SchemeSel : SchemeNorm][ColBorder].pixel);
+		setframeborder(c, urg ? SchemeUrg : focused ? SchemeSel : SchemeNorm);
 		drawtitle(c, focused);
 	}
-	if (!(wmh = XGetWMHints(dpy, c->win)))
+	updatenetstate(c);
+	/* a client without WM_HINTS (EWMH demands-attention) gets them, so
+	 * pagers that only read the ICCCM urgency see it too */
+	if (!(wmh = XGetWMHints(dpy, c->win)) && !(wmh = XAllocWMHints()))
 		return;
 	wmh->flags = urg ? (wmh->flags | XUrgencyHint) : (wmh->flags & ~XUrgencyHint);
 	XSetWMHints(dpy, c->win, wmh);
@@ -4183,8 +4432,7 @@ unfocus(Client *c, int setfocus)
 	if (!c)
 		return;
 	grabbuttons(c, 0);
-	XSetWindowBorder(dpy, c->frame, scheme[c->isurgent ? SchemeUrg
-		: SchemeNorm][ColBorder].pixel);
+	setframeborder(c, c->isurgent ? SchemeUrg : SchemeNorm);
 	drawtitle(c, 0);
 	if (setfocus) {
 		XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
@@ -4232,6 +4480,8 @@ unmanage(Client *c, int destroyed)
 	}
 	if (frame)
 		XDestroyWindow(dpy, frame);
+	if (c->cmap)
+		XFreeColormap(dpy, c->cmap);
 	freeicon(c);
 	free(c);
 	focus(NULL);
@@ -4608,7 +4858,11 @@ updatewindowtype(Client *c)
 	 * fullscreen state itself once the client is reparented. */
 	if (c->frame && state == netatom[NetWMFullscreen])
 		setfullscreen(c, 1);
-	if (wtype == netatom[NetWMWindowTypeDialog])
+	if (wtype == netatom[NetWMWindowTypeDialog]
+	|| wtype == netatom[NetWMWindowTypeUtility]
+	|| wtype == netatom[NetWMWindowTypeSplash]
+	|| wtype == netatom[NetWMWindowTypeToolbar]
+	|| wtype == netatom[NetWMWindowTypeNotification])
 		c->isfloating = 1;
 }
 
