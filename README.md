@@ -4,7 +4,7 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
 
 ## Features
 
-- **Frames and title bars** - 20px title bar with a real 16px
+- **Frames and title bars** - 18px title bar with a real 16px
   `_NET_WM_ICON` (no empty slot when absent), i3-style border and colors.
   Drag the title to move, Win+Space toggles floating, Button3 resizes (on
   borders).
@@ -28,6 +28,10 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
   dwm on a shaped, input-transparent overlay; in tabbed mode it follows the
   focused tab with the i3 notch. Nothing external to install. The thickness is
   `outlinepx` in `config.h`; the color is `col_accent`.
+- **Focus** - click to focus, no focus-follows-mouse. Switching tags, tabs
+  or closing a window hands the keyboard to the newly focused client.
+  `_NET_ACTIVE_WINDOW` follows i3's `focus_on_window_activation smart`: a
+  window on a visible tag is focused, any other one is marked urgent.
 - **Session** - `integration/` has autostart, the clock, in-place restart, the
   exit confirmation, and the xsession selector.
 
@@ -145,7 +149,10 @@ docker run --rm -e SHOW_TRAY=1 -v "$PWD":/src -v /tmp/dwm-out:/out \
 flags. `TEST_OUTLINE=1` (with `SHOW_CLIENTS=1`) checks the in-process focus
 outline: geometry around the focused frame, empty input shape, hiding in
 fullscreen, and the notched tabbed shape. `test/session.sh` covers
-restart/exit; `test/icons.sh`, `test/modes.sh`, `test/fixed.sh`, and
+restart/exit; `test/focus.sh` checks that the keyboard really reaches the
+focused client (tag switches, tabs, closing, short-lived windows, clicks,
+fullscreen-at-map, `_NET_ACTIVE_WINDOW`) and exits non-zero on failure;
+`test/icons.sh`, `test/modes.sh`, `test/fixed.sh`, and
 `test/taglayouts.sh` cover icons, binding modes, fixed-size prompts, and
 per-tag layouts.
 
