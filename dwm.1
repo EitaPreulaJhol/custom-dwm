@@ -10,10 +10,15 @@ the look and key bindings of an i3 session: per-window title bars, i3 colors,
 tabbed and stacking layouts, binding modes for resizing and moving, a taskbar
 and a system tray.
 .P
-Every client lives in a frame with an 18px title bar that shows its
-.B _NET_WM_ICON
-(when it has one) and its title. The focused frame gets a 2px orange outline,
-drawn by dwm itself on an input-transparent overlay.
+Every client lives in a frame with an 18px title bar that shows its icon (its
+.BR _NET_WM_ICON ,
+or else the icon theme's icon for its class) and its title. The focused frame
+gets a 2px orange outline, drawn by dwm itself on an input-transparent
+overlay. Windows that draw their own decorations (no decorations in
+.BR _MOTIF_WM_HINTS )
+get no title bar, except as tiled windows of the tabbed layout. Windows with
+a 32-bit (ARGB) visual get a frame of the same depth, so their transparency
+works with a compositor.
 .P
 The layouts are:
 .TP
@@ -34,15 +39,17 @@ per tiled window; only the active tab is mapped.
 windows are placed and sized freely.
 .P
 Tiled windows are separated by 10px gaps, with the same gap at the monitor
-edges. Windows that do not tile (floating rules, dialogs, transients,
-fixed-size windows such as GCR/keyring prompts) open floating and centered on
+edges. Windows that do not tile (floating rules, dialog, utility, splash,
+toolbar and notification windows, transients, fixed-size windows such as
+GCR/keyring prompts) open floating and centered on
 their monitor, at most 1310x710 (i3's
 .BR floating_maximum_size ).
 .P
-Windows are grouped by ten tags, the i3 workspaces 1 to 10. Each tag
-remembers its own layout, so changing the layout of one tag does not affect
-the others; when several tags are viewed together, the first one provides
-the layout.
+Windows are grouped by ten tags, the i3 workspaces 1 to 10, published as the
+EWMH desktops (pagers and window switchers can read and change them). Each
+tag remembers its own layout, master area size and number of master windows,
+so changing them on one tag does not affect the others; when several tags are
+viewed together, the first one provides them.
 .P
 The bar shows the tags (the selected one framed in orange, occupied ones
 followed by a dot), the active binding mode, a taskbar with the windows of
@@ -61,7 +68,11 @@ request (a client or a tool such as
 asking to activate a window) follows i3's
 .BR "focus_on_window_activation smart" :
 a window on a viewed tag is focused, a window on a hidden tag is marked
-urgent instead.
+urgent instead. Tools that first switch to the window's desktop (such as
+.B xdotool windowactivate
+or window switchers) do get it focused. A
+.B _NET_WM_STATE_DEMANDS_ATTENTION
+request also marks a window urgent.
 .SH OPTIONS
 .TP
 .B \-v
@@ -155,7 +166,11 @@ Enter (or leave) resize mode.
 Enter (or leave) move mode.
 .TP
 .B Mod\-[1..9], Mod\-0
-View tag 1..9, or tag 10.
+View tag 1..9, or tag 10. Selecting the tag that is already viewed goes back
+to the previous one (i3's
+.BR workspace_auto_back_and_forth ,
+.B autobackandforth
+in config.h).
 .TP
 .B Mod\-Shift\-[1..9], Mod\-Shift\-0
 Move the focused window to tag 1..9, or tag 10.
@@ -183,21 +198,17 @@ Focus the previous/next monitor, if any.
 Send the focused window to the previous/next monitor, if any.
 .TP
 .B Mod\-Shift\-r, Mod\-Shift\-c
-Restart dwm in place with
-.BR dwm-restart .
-Windows and the session helpers are kept; windows on hidden tags are moved to
-the current tag.
+Restart dwm in place: dwm re-executes itself (picking up a newly installed
+binary). Windows and the session helpers are kept, and so are each window's
+tags, monitor, floating state and size factor, the window order, every tag's
+layout and factors, the viewed tags and the focus.
+.B dwm-restart
+does the same from a shell.
 .TP
 .B Mod\-Shift\-e
 Ask for confirmation with
 .BR dwm-exit ,
 then end the session.
-.TP
-.B Mod\-Shift\-q
-Quit dwm immediately. Under
-.B dwm-session
-this restarts dwm, like
-.BR Mod\-Shift\-r .
 .SS Binding modes
 While a mode is active its name is shown in the bar and the keys below are
 taken by dwm, so the focused window does not receive them.
@@ -209,9 +220,12 @@ or
 go back to normal mode.
 .TP
 .B Resize mode
-For a floating window, Left/j and Right/; make it 10px narrower/wider, Up/l
-and Down/k make it 10px shorter/taller. For a tiled window, Left/Right shrink
-and grow the master area and Up/Down change the number of master windows.
+Left/j and Right/; make the window narrower/wider, Up/l and Down/k make it
+shorter/taller, like i3's resize mode. A floating window changes by 10px. For
+a tiled window the direction that crosses the master/stack split moves the
+split, and the other one changes the window's share of its column (splith)
+or row (splitv), 2 percentage points per step. Shift\-Up/Shift\-Down
+remove/add a master window.
 .TP
 .B Move mode
 The arrows move a floating window by 10px (50px with Shift) or swap a tiled
@@ -231,7 +245,9 @@ on the title bar or the frame resizes the window while dragging, from the
 nearest edge or corner.
 .TP
 .B Mod\-Button1
-anywhere on a window moves it while dragging. Tiled windows become floating.
+anywhere on a window moves it while dragging. A tiled window stays tiled: when
+released over another tiled window they swap places, over another monitor it
+moves there.
 .TP
 .B Mod\-Button2
 on the window toggles between tiled and floating.
@@ -239,12 +255,36 @@ on the window toggles between tiled and floating.
 .B Mod\-Button3
 anywhere on a window resizes it while dragging. Tiled windows become
 floating.
+.P
+Windows that draw their own title bar can also move and resize themselves
+through
+.BR _NET_WM_MOVERESIZE .
+.SH SIGNALS
+.TP
+.B SIGHUP
+restart in place, like
+.BR Mod\-Shift\-r .
+.TP
+.BR SIGTERM ", " SIGINT
+quit cleanly: windows are handed back to the root window with their state
+saved for the next window manager start.
 .SH FILES
 .TP
 .B ~/.dwm/dwm-session
-runs the autostart once and restarts dwm in a loop until
+runs the autostart once and starts dwm again if it exits, until
 .B ~/.dwm/exit
-exists.
+exists. A dwm that keeps exiting right after start is retried with a growing
+delay.
+.TP
+.B ~/.dwm/dwm.log
+dwm's error output for the current session (the previous one is kept as
+.BR dwm.log.old ).
+.TP
+.BR dwm-restart ", " dwm-exit
+signal the dwm of the current display (found through
+.BR _NET_SUPPORTING_WM_CHECK " and " _NET_WM_PID
+by
+.BR dwm-wmpid ).
 .TP
 .B ~/.dwm/autostart.sh
 session helpers: tray applets, polkit agent, screen settings, the clock.
@@ -258,10 +298,8 @@ installs the binary and this page under ~/.local and the session files under
 .BR xsetroot (1),
 .BR i3 (1)
 .SH ISSUES
-A process restart moves windows on hidden tags to the current tag. Icons come
-only from
-.BR _NET_WM_ICON ;
-there is no icon theme lookup.
+The icon theme lookup reads only PNG icons (the current GTK icon theme, the
+themes it inherits, hicolor and pixmaps); SVG-only icons are not shown.
 .SH BUGS
 This is a personal build; report problems to its maintainer, not to
 suckless.org.
