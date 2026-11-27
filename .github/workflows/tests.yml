@@ -1,0 +1,96 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The test image (test/Dockerfile), built once and handed to the test jobs.
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Build dwm-test:local
+        uses: docker/build-push-action@v6
+        with:
+          context: test
+          file: test/Dockerfile
+          tags: dwm-test:local
+          outputs: type=docker,dest=/tmp/dwm-test.tar
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dwm-test-image
+          path: /tmp/dwm-test.tar
+          retention-days: 1
+
+  # dwm and dwm-msg must build without a single warning.
+  build:
+    needs: image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dwm-test-image
+          path: /tmp
+      - run: docker load -i /tmp/dwm-test.tar
+      - name: make
+        run: |
+          docker run --rm -v "$PWD":/src -w /src dwm-test:local \
+            sh -c 'make clean all 2>&1' | tee build.log
+          test -x dwm && test -x dwm-msg
+          if grep -E 'warning|error' build.log; then
+            echo "::error::the build has warnings"
+            exit 1
+          fi
+
+  # Each test script runs dwm in its own Xvfb inside the container and
+  # exits non-zero on failure; its /out (reports, screenshots) is kept.
+  test:
+    needs: image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        test: [focus, ewmh, fixed, icons, minimize, modes, restart, session,
+               taglayouts, tasks, tree, ipc]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dwm-test-image
+          path: /tmp
+      - run: docker load -i /tmp/dwm-test.tar
+      - name: test/${{ matrix.test }}.sh
+        run: |
+          mkdir -p out
+          # session.sh runs the installed binary without building it
+          docker run --rm -v "$PWD":/src -v "$PWD/out":/out -w /src \
+            dwm-test:local sh -c 'make -s all >/dev/null && sh test/${{ matrix.test }}.sh; s=$?; echo "== dwm log"; cat /tmp/dwm.log 2>/dev/null; exit $s'
+      - name: Report
+        if: always()
+        run: |
+          for f in out/*.txt; do
+            [ -f "$f" ] || continue
+            echo "== $f"
+            cat "$f"
+          done
+          grep -h 'FAIL' out/*.txt 2>/dev/null | sed 's/^/::error::/' || true
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: out-${{ matrix.test }}
+          path: out/
+          retention-days: 7

@@ -213,6 +213,10 @@ minimized, a minimized one restored), the clock area opens the polybar calendar 
 ## Tests
 
 The Docker harness runs dwm in Xvfb; it never touches the live session.
+GitHub Actions (`.github/workflows/tests.yml`) builds the image, checks that
+`make` has no warnings and runs every `test/*.sh` below in its own job on
+each push and pull request; the reports and screenshots of a failing test
+are kept as the `out-<test>` artifact.
 
 ```sh
 docker build -t dwm-test:local -f test/Dockerfile test/
