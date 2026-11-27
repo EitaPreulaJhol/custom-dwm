@@ -92,7 +92,7 @@ UPID=$(cat /tmp/lastpid)
 check "utility floats (own width)" 300 "$(info "$U" "Width:")"
 
 # 5. desktops
-check "desktop names" '"1", "2", "3", "4", "5", "6", "7", "8", "9", "10"' "$(prop "$ROOT" _NET_DESKTOP_NAMES)"
+check "desktop names" '"main:1", "main:2", "main:3", "main:4", "main:5", "main:6", "main:7", "main:8", "main:9", "main:10"' "$(prop "$ROOT" _NET_DESKTOP_NAMES)"
 /tmp/clientmsg "$A" _NET_WM_DESKTOP 4; sleep 0.3
 check "_NET_WM_DESKTOP request moves A" 4 "$(prop "$A" _NET_WM_DESKTOP)"
 check "A hidden" IsUnviewable "$(info "$A" "Map State:")"
