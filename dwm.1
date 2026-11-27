@@ -20,6 +20,15 @@ get no title bar, except as tiled windows of the tabbed layout. Windows with
 a 32-bit (ARGB) visual get a frame of the same depth, so their transparency
 works with a compositor.
 .P
+.B Tasks
+group the workspaces: each task has its own tags 1..10, with their own
+windows, layouts and factors, and remembers the viewed tags and the focused
+window of every monitor. The tasks are shown left of the tags; the active one
+is the same on every monitor. Tasks are created, renamed and removed at
+runtime and their labels are kept in
+.BR ~/.dwm/tasks .
+New windows open in the active task.
+.P
 The layouts are:
 .TP
 .B splith ([]=)
@@ -90,17 +99,17 @@ command;
 keeps it set to the date and time.
 .TP
 .B Button1
-on a tag label views that tag; on a taskbar entry focuses that window; on the
-status text opens the polybar calendar popup.
+on a task label switches to that task.
 .TP
 .B Button3
-on a tag label adds/removes that tag to/from the view.
+on a task label renames that task.
 .TP
 .B Mod\-Button1
-on a tag label moves the focused window to that tag.
+on a task label moves the focused window to that task.
 .TP
-.B Mod\-Button3
-on a tag label adds/removes that tag to/from the focused window.
+.B Button1
+on a tag label views that tag; on a taskbar entry focuses that window; on the
+status text opens the polybar calendar popup.
 .TP
 .B Mod\-Button2
 on a taskbar entry swaps the focused window with the master (tiled layouts
@@ -175,15 +184,42 @@ in config.h).
 .B Mod\-Shift\-[1..9], Mod\-Shift\-0
 Move the focused window to tag 1..9, or tag 10.
 .TP
-.B Mod\-Control\-[1..9], Mod\-Control\-0
-Add/remove that tag to/from the view.
-.TP
-.B Mod\-Control\-Shift\-[1..9], Mod\-Control\-Shift\-0
-Add/remove that tag to/from the focused window.
-.TP
 .B Mod\-Tab
 View the previously selected tags (i3's
 .BR back_and_forth ).
+.TP
+.B Mod\-Alt\-[1..9], Mod\-Alt\-0
+Switch to task 1..9, or task 10. The active task again goes back to the
+previous one.
+.TP
+.B Mod\-Alt\-Shift\-[1..9], Mod\-Alt\-Shift\-0
+Move the focused window to task 1..10, keeping its tags.
+.TP
+.B Mod\-Prior / Mod\-Next
+Switch to the previous/next task (Page Up/Down; wraps around).
+.TP
+.B Mod\-grave
+Switch to the previously active task.
+.TP
+.B Mod\-n
+Create a task after the active one, switch to it and edit its label in the
+bar. It is named with the lowest free number until a label is typed.
+.TP
+.B Mod\-Shift\-n
+Edit the active task's label in the bar: type the label,
+.B Return
+keeps it,
+.B Escape
+cancels,
+.B BackSpace
+and
+.B Control\-u
+delete. An empty label keeps the old one.
+.TP
+.B Mod\-Shift\-Delete
+Remove the active task. Its windows move, with their tags, to the previous
+task (the next one for the first task), which becomes active. The last task
+is never removed.
 .TP
 .B Mod\-j / Mod\-k
 Focus the next/previous window in the client list.
@@ -285,6 +321,12 @@ signal the dwm of the current display (found through
 .BR _NET_SUPPORTING_WM_CHECK " and " _NET_WM_PID
 by
 .BR dwm-wmpid ).
+.TP
+.B ~/.dwm/tasks
+the task labels, one per line, rewritten on every change and read at start.
+Without it the
+.B deftasks
+list of config.h is used.
 .TP
 .B ~/.dwm/autostart.sh
 session helpers: tray applets, polkit agent, screen settings, the clock.

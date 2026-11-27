@@ -16,6 +16,14 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
 - **Bar and taskbar** - 10 tags with the orange active frame, occupied dot,
   clock, 16px tray; taskbar items show real icons, titles, and an orange frame
   on the focused window.
+- **Tasks** - groups of workspaces shown left of the tags. Each task has its
+  own tags 1–10 with their own windows, layouts and factors, and remembers
+  the viewed tags and the focused window of every monitor; the active task is
+  global. `Mod+n` creates a task (its label is typed right in the bar),
+  `Mod+Shift+n` (or `Button3` on the task) renames, `Mod+Shift+Delete`
+  removes the active one and hands its windows to the neighbour. The labels
+  are kept in `~/.dwm/tasks` (one per line); `deftasks` in `config.h` is only
+  the initial list.
 - **Layouts and gaps** - splith, splitv, monocle, tabbed, and floating, with
   uniform 10px inner and outer gaps. Layouts, the master size and the number
   of master windows are remembered per tag, so switching modes on one
@@ -38,13 +46,15 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
   `_NET_ACTIVE_WINDOW` follows i3's `focus_on_window_activation smart`: a
   window on a visible tag is focused, any other one is marked urgent (as is
   one that sets `_NET_WM_STATE_DEMANDS_ATTENTION`).
-- **EWMH** - tags are the EWMH desktops (`_NET_NUMBER_OF_DESKTOPS`,
+- **EWMH** - every tag of every task is an EWMH desktop (`task * 10 + tag`,
+  named `task:tag`; `_NET_NUMBER_OF_DESKTOPS`,
   `_NET_DESKTOP_NAMES`, `_NET_CURRENT_DESKTOP`, `_NET_WM_DESKTOP`, all also
   settable by pagers), plus `_NET_CLOSE_WINDOW`, `_NET_WM_MOVERESIZE` (CSD
   apps dragging their own title bar) and `_NET_FRAME_EXTENTS`.
 - **Restart** - `Mod+Shift+r` (or `dwm-restart`, i.e. SIGHUP) re-execs dwm in
   place and keeps every window's tags, monitor, floating state and size, the
-  window order, each tag's layout and factors, the viewed tags and the focus.
+  window order, the tasks, each tag's layout and factors, the viewed tags and
+the focus.
   The state is kept in window properties all the time, so even a crashed dwm
   is restored. SIGTERM quits cleanly.
 - **Session** - `integration/` has autostart, the clock, in-place restart, the
@@ -133,6 +143,9 @@ keeps crashing) and logs its errors to `~/.dwm/dwm.log`. `dwm-restart` and
 | `Mod+Shift+f` | fullscreen |
 | `Mod+1..0` / `Mod+Shift+1..0` | view / move to tags 1–10 (the current tag again: back and forth) |
 | `Mod+Tab` | previous tag |
+| `Mod+Alt+1..0` / `Mod+Alt+Shift+1..0` | switch to / move the window to task 1–10 (the active task again: back and forth) |
+| `Mod+Page_Up` / `Mod+Page_Down` / ``Mod+` `` | previous / next / last task |
+| `Mod+n` / `Mod+Shift+n` / `Mod+Shift+Delete` | new / rename / remove task (label typed in the bar: `Return` keeps, `Escape` cancels) |
 | `Mod+r` / `Mod+m` | resize / move mode |
 | `Mod+Shift+c` / `Mod+Shift+r` | restart dwm in place (state kept) |
 | `Mod+Shift+e` | exit with confirmation |
@@ -151,7 +164,8 @@ number of master windows); in move mode use the arrows (Shift = 50px for
 floating). `Return`, `Escape`, `Mod+r` or `Mod+m` leaves.
 The mode keys are grabbed, so the focused client does not swallow them.
 
-Bar clicks: tags switch, `Mod`+tag moves the window, taskbar entries focus the
+Bar clicks: tasks switch (`Button3` renames, `Mod`+click moves the window
+there), tags switch, taskbar entries focus the
 window, the clock area opens the polybar calendar popup.
 
 ## Tests
@@ -175,7 +189,9 @@ fullscreen-at-map, `_NET_ACTIVE_WINDOW`) and exits non-zero on failure;
 `test/icons.sh`, `test/modes.sh`, `test/fixed.sh`, and
 `test/taglayouts.sh` cover icons, binding modes, fixed-size prompts, and
 per-tag layouts. `test/restart.sh` checks that a restart (key and SIGHUP)
-keeps the state and that SIGTERM hands the windows back; `test/ewmh.sh`
+keeps the state and that SIGTERM hands the windows back; `test/tasks.sh` covers tasks (bar prompt, switching, per-task tags and
+layouts, moving windows, EWMH desktops, restart, removal and
+`~/.dwm/tasks` at login); `test/ewmh.sh`
 covers the EWMH/Motif support, ARGB frames, drag-to-swap, back-and-forth,
 40 tabs and the icon theme fallback.
 
