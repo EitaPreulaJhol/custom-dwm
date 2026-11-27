@@ -97,7 +97,7 @@ static const Layout layouts[] = {
 	{ MODKEY,                       KEY,      view,           {.ui = 1 << TAG} }, \
 	{ MODKEY|ShiftMask,             KEY,      tag,            {.ui = 1 << TAG} },
 #define TASKKEYS(KEY,TASK) \
-	{ MODKEY|Mod1Mask,              KEY,      viewtask,       {.i = TASK} }, \
+	{ MODKEY|ControlMask,           KEY,      viewtask,       {.i = TASK} }, \
 	{ MODKEY|Mod1Mask|ShiftMask,    KEY,      movetotask,     {.i = TASK} },
 
 /* helper for spawning shell commands in the pre dwm-5.0 fashion */
@@ -167,7 +167,7 @@ static const Key keys[] = {
 	TAGKEYS(                        XK_8,                      7)
 	TAGKEYS(                        XK_9,                      8)
 	TAGKEYS(                        XK_0,                      9)
-	/* tasks: Mod+Alt+1..0 view task N, Mod+Alt+Shift+1..0 move the window */
+	/* tasks: Mod+Ctrl+1..0 view task N, Mod+Alt+Shift+1..0 move the window */
 	TASKKEYS(                       XK_1,                      0)
 	TASKKEYS(                       XK_2,                      1)
 	TASKKEYS(                       XK_3,                      2)

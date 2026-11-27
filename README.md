@@ -143,7 +143,7 @@ keeps crashing) and logs its errors to `~/.dwm/dwm.log`. `dwm-restart` and
 | `Mod+Shift+f` | fullscreen |
 | `Mod+1..0` / `Mod+Shift+1..0` | view / move to tags 1–10 (the current tag again: back and forth) |
 | `Mod+Tab` | previous tag |
-| `Mod+Alt+1..0` / `Mod+Alt+Shift+1..0` | switch to / move the window to task 1–10 (the active task again: back and forth) |
+| `Mod+Ctrl+1..0` / `Mod+Alt+Shift+1..0` | switch to / move the window to task 1–10 (the active task again: back and forth) |
 | `Mod+Page_Up` / `Mod+Page_Down` / ``Mod+` `` | previous / next / last task |
 | `Mod+n` / `Mod+Shift+n` / `Mod+Shift+Delete` | new / rename / remove task (label typed in the bar: `Return` keeps, `Escape` cancels) |
 | `Mod+r` / `Mod+m` | resize / move mode |

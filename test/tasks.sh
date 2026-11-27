@@ -88,14 +88,14 @@ check "one hidden in the other task" IsUnviewable "$(shown "$W1")"
 W2=$(open two)
 check "two on work:1" 10 "$(desk "$W2")"
 
-# 3. switching: Mod+Alt+N, again = back and forth, Mod+grave, Page_Up/Down
-key super+alt+1
-check "Mod+Alt+1 goes to main" 0 "$(curdesk)"
+# 3. switching: Mod+Ctrl+N, again = back and forth, Mod+grave, Page_Up/Down
+key ctrl+super+1
+check "Mod+Ctrl+1 goes to main" 0 "$(curdesk)"
 check "one shown in main" IsViewable "$(shown "$W1")"
 check "two hidden in main" IsUnviewable "$(shown "$W2")"
 check "focus back on one" "$W1" "$(active)"
-key super+alt+1
-check "Mod+Alt+1 again goes back" 10 "$(curdesk)"
+key ctrl+super+1
+check "Mod+Ctrl+1 again goes back" 10 "$(curdesk)"
 check "focus back on two" "$W2" "$(active)"
 key super+grave
 check "Mod+grave previous task" 0 "$(curdesk)"
@@ -103,24 +103,24 @@ key super+Next
 check "Mod+Page_Down next task" 10 "$(curdesk)"
 key super+Next
 check "Mod+Page_Down wraps" 0 "$(curdesk)"
-key super+alt+5
+key ctrl+super+5
 check "missing task ignored" 0 "$(curdesk)"
 
 # 4. tags are per task: main:3 and work:3 are different workspaces
 key super+3
 check "main:3" 2 "$(curdesk)"
-key super+alt+2
+key ctrl+super+2
 check "work keeps its own tag 1" 10 "$(curdesk)"
-key super+alt+1
+key ctrl+super+1
 check "main keeps tag 3" 2 "$(curdesk)"
 key super+1
 
 # 5. layouts are per task x tag: work:1 tabbed, main:1 still split
-key super+alt+2
+key ctrl+super+2
 W3=$(open three)
 key super+w
 TABW=$(width "$W3")
-key super+alt+1
+key ctrl+super+1
 W4=$(open four)
 SPLITW=$(width "$W4")
 echo "tabbed $TABW split $SPLITW" >>"$OUT"
@@ -164,10 +164,10 @@ echo "after: $AFTER" >>"$OUT"
 check "state after restart" "$BEFORE" "$AFTER"
 check "focused window still shown" IsViewable "$(shown "$(active)")"
 check "one still hidden" IsUnviewable "$(shown "$W1")"
-key super+alt+1
+key ctrl+super+1
 check "main after restart" 0 "$(curdesk)"
 check "one shown after restart" IsViewable "$(shown "$W1")"
-key super+alt+2
+key ctrl+super+2
 check "work:1 still tabbed after restart" yes "$([ "$(width "$W3")" -gt 1200 ] && echo yes || echo no)"
 
 # 10. a third task, then Mod+Shift+Delete hands its windows to the
@@ -182,7 +182,7 @@ check "task removed from the file" "main,proj," "$(tasksfile)"
 check "neighbour is active" 10 "$(curdesk)"
 check "five moved to proj:1" 10 "$(desk "$W5")"
 check "20 desktops again" 20 "$(ndesk)"
-key super+alt+1
+key ctrl+super+1
 key super+shift+Delete
 check "first task removed" "proj," "$(tasksfile)"
 check "everything on proj" "0 0 0 0 0" "$(desk "$W1") $(desk "$W2") $(desk "$W3") $(desk "$W4") $(desk "$W5")"
