@@ -149,7 +149,7 @@ keeps crashing) and logs its errors to `~/.dwm/dwm.log`. `dwm-restart` and
 | `Mod+s` / `Mod+w` / `Mod+e` | stacking / tabbed / toggle split |
 | `Mod+space` / `Mod+Shift+space` | toggle floating / focus the other |
 | `Mod+Shift+f` | fullscreen |
-| `Mod+1..0` / `Mod+Shift+1..0` | view / move to tags 1–10 (the current tag again: back and forth) |
+| `Mod+1..0` / `Mod+Shift+1..0` | view / move to tags 1–10 |
 | `Mod+Tab` | previous tag |
 | `Mod+Ctrl+1..0` / `Mod+Alt+Shift+1..0` | switch to / move the window to task 1–10 (the active task again: back and forth) |
 | `Mod+Page_Up` / `Mod+Page_Down` / ``Mod+` `` | previous / next / last task |
@@ -202,7 +202,7 @@ layouts, moving windows, EWMH desktops, restart, removal and
 `~/.dwm/tasks` at login); `test/minimize.sh` covers minimizing from the
 taskbar (tiled, floating and tabbed windows, client and pager requests,
 restart); `test/ewmh.sh`
-covers the EWMH/Motif support, ARGB frames, drag-to-swap, back-and-forth,
+covers the EWMH/Motif support, ARGB frames, drag-to-swap,
 40 tabs and the icon theme fallback.
 
 ## Files

@@ -79,7 +79,8 @@ static const int nmaster     = 1;    /* number of clients in master area */
 static const int resizehints = 0;    /* 0 = exact tiling cells (consistent gaps) */
 static const int lockfullscreen = 1; /* 1 will force focus on the fullscreen window */
 static const int refreshrate = 120;  /* refresh rate (per second) for client move/resize */
-static const int autobackandforth = 1; /* i3 workspace_auto_back_and_forth: Mod+N on the current tag goes back */
+static const int autobackandforth = 0; /* 1: Mod+N on the current tag goes back (i3 workspace_auto_back_and_forth) */
+static const int taskbackandforth = 1; /* 1: Mod+Ctrl+N on the active task goes back to the previous task */
 
 static const Layout layouts[] = {
 	/* symbol     arrange function */

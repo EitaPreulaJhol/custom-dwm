@@ -1,7 +1,7 @@
 #!/bin/sh
 # EWMH/Motif support and the newer interactions: frame extents, windows with
 # client-side decorations, ARGB frames, floating window types, desktops,
-# close/move/resize requests, demands-attention, workspace back-and-forth,
+# close/move/resize requests, demands-attention, no workspace back-and-forth,
 # drag-to-swap, many windows in a tabbed layout and icon theme fallback.
 # Exits non-zero on failure.
 set -u
@@ -104,10 +104,11 @@ check "pager request for the current desktop is not back-and-forth" 4 "$(curdesk
 key super+1
 check "back on 1" 0 "$(curdesk)"
 
-# 6. workspace_auto_back_and_forth
+# 6. no workspace_auto_back_and_forth: the current tag again stays there
 key super+3
 key super+3
-check "Mod+3 twice returns to 1" 0 "$(curdesk)"
+check "Mod+3 twice stays on 3" 2 "$(curdesk)"
+key super+1
 
 # 7. demands attention on an unfocused window
 /tmp/clientmsg "$M" _NET_WM_STATE 1 _NET_WM_STATE_DEMANDS_ATTENTION 0; sleep 0.3

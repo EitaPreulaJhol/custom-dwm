@@ -5328,7 +5328,7 @@ viewtask(const Arg *arg)
 {
 	if (arg->i == seltask) {
 		/* the active task again: back and forth, like the tags */
-		if (autobackandforth && prevtask != seltask)
+		if (taskbackandforth && prevtask != seltask)
 			switchtask(prevtask);
 		return;
 	}
