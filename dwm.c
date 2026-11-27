@@ -375,6 +375,7 @@ static void togglesplit(const Arg *arg);
 /* i3 container tree */
 static void containerlayout(const Arg *arg);
 static void drawdeco(Node *n);
+static void focusurgent(const Arg *arg);
 static Node *leafof(Node *n, Client *c);
 static Node *nodenew(int leaf);
 static void nodefree(Node *n);
@@ -387,6 +388,7 @@ static void treeswap(Monitor *m, Client *a, Client *b);
 static Node *wintodeco(Window w, Monitor **mp);
 static void loadtrees(void);
 static int savetrees(void);
+static void focusclient(Client *c);
 static Node *decochild(Node *n, int x, int y);
 static void decoshow(Monitor *m, Node *n, int x, int y, int w, int h);
 static Node *nodefocusleaf(Node *n);
@@ -5283,6 +5285,45 @@ loadtrees(void)
 		k += nodes * TREENODE; /* whatever the parser did not take */
 	}
 	XFree(p);
+}
+
+/* i3 "[urgent=latest] focus": the urgent window, wherever it is. */
+void
+focusurgent(const Arg *arg)
+{
+	Monitor *m;
+	Client *c, *u = NULL;
+
+	(void)arg;
+	for (m = mons; m && !u; m = m->next)
+		for (c = m->stack; c && !u; c = c->snext)
+			if (c->isurgent)
+				u = c;
+	if (u)
+		focusclient(u);
+}
+
+/* Focus u wherever it is: its task, monitor and tag are shown and a
+ * minimized window is restored. */
+void
+focusclient(Client *u)
+{
+	Arg a;
+
+	if (u->task != seltask)
+		switchtask(u->task);
+	if (u->mon != selmon) {
+		unfocus(selmon->sel, 0);
+		selmon = u->mon;
+	}
+	if (!(u->tags & selmon->tagset[selmon->seltags])) {
+		a.ui = 1u << (ffs((int)u->tags) - 1);
+		view(&a);
+	}
+	if (u->minimized)
+		setminimized(u, 0);
+	focus(u);
+	restack(selmon);
 }
 
 void

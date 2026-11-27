@@ -134,6 +134,8 @@ static const Key keys[] = {
 	{ MODKEY,                       XK_s,      containerlayout, {.i = Stacked } },
 	{ MODKEY,                       XK_w,      containerlayout, {.i = Tabbed } },
 	{ MODKEY,                       XK_e,      togglesplit,    {0} },
+	/* i3: [urgent=latest] focus, on any task or tag */
+	{ MODKEY,                       XK_u,      focusurgent,    {0} },
 	/* i3: $mod+space floating toggle */
 	{ MODKEY,                       XK_space,  togglefloating, {0} },
 	/* i3: $mod+Shift+space focus mode_toggle */
