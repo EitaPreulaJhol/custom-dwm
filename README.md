@@ -27,7 +27,7 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
 - **Tasks** - groups of workspaces shown left of the tags. Each task has its
   own tags 1–10 with their own windows, layouts and factors, and remembers
   the viewed tags and the focused window of every monitor; the active task is
-  global. `Mod+n` creates a task (its label is typed right in the bar),
+  global. `Mod+n` creates a task (up to 12; its label is typed in the bar),
   `Mod+Shift+n` (or `Button3` on the task) renames, `Mod+Shift+Delete`
   removes the active one and hands its windows to the neighbour. The labels
   are kept in `~/.dwm/tasks` (one per line); `deftasks` in `config.h` is only
@@ -152,6 +152,7 @@ keeps crashing) and logs its errors to `~/.dwm/dwm.log`. `dwm-restart` and
 | `Mod+1..0` / `Mod+Shift+1..0` | view / move to tags 1–10 |
 | `Mod+Tab` | previous tag |
 | `Mod+Ctrl+1..0` / `Mod+Alt+Shift+1..0` | switch to / move the window to task 1–10 (the active task again: back and forth) |
+| `Mod+F1..F12` | move the window to task 1–12 |
 | `Mod+Page_Up` / `Mod+Page_Down` / ``Mod+` `` | previous / next / last task |
 | `Mod+n` / `Mod+Shift+n` / `Mod+Shift+Delete` | new / rename / remove task (label typed in the bar: `Return` keeps, `Escape` cancels) |
 | `Mod+r` / `Mod+m` | resize / move mode |

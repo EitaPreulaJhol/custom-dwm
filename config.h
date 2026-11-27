@@ -179,6 +179,19 @@ static const Key keys[] = {
 	TASKKEYS(                       XK_8,                      7)
 	TASKKEYS(                       XK_9,                      8)
 	TASKKEYS(                       XK_0,                      9)
+	/* Mod+F1..F12 move the focused window to task 1..12 */
+	{ MODKEY,                       XK_F1,    movetotask,     {.i = 0} },
+	{ MODKEY,                       XK_F2,    movetotask,     {.i = 1} },
+	{ MODKEY,                       XK_F3,    movetotask,     {.i = 2} },
+	{ MODKEY,                       XK_F4,    movetotask,     {.i = 3} },
+	{ MODKEY,                       XK_F5,    movetotask,     {.i = 4} },
+	{ MODKEY,                       XK_F6,    movetotask,     {.i = 5} },
+	{ MODKEY,                       XK_F7,    movetotask,     {.i = 6} },
+	{ MODKEY,                       XK_F8,    movetotask,     {.i = 7} },
+	{ MODKEY,                       XK_F9,    movetotask,     {.i = 8} },
+	{ MODKEY,                       XK_F10,   movetotask,     {.i = 9} },
+	{ MODKEY,                       XK_F11,   movetotask,     {.i = 10} },
+	{ MODKEY,                       XK_F12,   movetotask,     {.i = 11} },
 	{ MODKEY,                       XK_Prior,  cycletask,      {.i = -1 } },
 	{ MODKEY,                       XK_Next,   cycletask,      {.i = +1 } },
 	{ MODKEY,                       XK_grave,  lasttask,       {0} },

@@ -201,6 +201,10 @@ previous one.
 .B Mod\-Alt\-Shift\-[1..9], Mod\-Alt\-Shift\-0
 Move the focused window to task 1..10, keeping its tags.
 .TP
+.B Mod\-[F1..F12]
+Move the focused window to task 1..12, keeping its tags. A task that does not
+exist is ignored.
+.TP
 .B Mod\-Prior / Mod\-Next
 Switch to the previous/next task (Page Up/Down; wraps around).
 .TP
@@ -209,7 +213,8 @@ Switch to the previously active task.
 .TP
 .B Mod\-n
 Create a task after the active one, switch to it and edit its label in the
-bar. It is named with the lowest free number until a label is typed.
+bar. It is named with the lowest free number until a label is typed. There are
+at most 12 tasks.
 .TP
 .B Mod\-Shift\-n
 Edit the active task's label in the bar: type the label,

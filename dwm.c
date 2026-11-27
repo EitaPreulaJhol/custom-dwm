@@ -67,7 +67,7 @@
 #define TAGMASK                 ((1 << LENGTH(tags)) - 1)
 #define NTAGS                   ((unsigned int)LENGTH(tags))
 #define PT(T)                   ((unsigned int)seltask * NTAGS + (T)) /* per task x tag index */
-#define MAXTASKS                32
+#define MAXTASKS                12
 #define TASKNAMELEN             64
 #define TEXTW(X)                (drw_fontset_getwidth(drw, (X)) + lrpad)
 #define MFACT(M)                ((M)->mfacts[PT(curtag(M))])

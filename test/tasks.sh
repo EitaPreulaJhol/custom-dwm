@@ -134,6 +134,15 @@ check "four moved to work:1" 10 "$(desk "$W4")"
 check "four hidden after the move" IsUnviewable "$(shown "$W4")"
 check "still in main" 0 "$(curdesk)"
 
+# 6b. Mod+F1..F12 move the focused window to task 1..12, keeping its tag
+F=$(active); FD=$(desk "$F")
+key super+F2
+check "Mod+F2 moves to work" $((FD + 10)) "$(desk "$F")"
+/tmp/clientmsg "$F" _NET_WM_DESKTOP "$FD"; sleep 0.3
+check "moved back" "$FD" "$(desk "$F")"
+key super+F3
+check "Mod+F3 without a third task does nothing" "$FD" "$(desk "$F")"
+
 # 7. pager requests address task x tag
 /tmp/clientmsg "$ROOT" _NET_CURRENT_DESKTOP 13; sleep 0.3
 check "_NET_CURRENT_DESKTOP 13 = work:4" 13 "$(curdesk)"
