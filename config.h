@@ -53,6 +53,12 @@ static const char *colors[][3]      = {
 /* tagging: i3 workspaces 1..10 */
 static const char *tags[] = { "1", "2", "3", "4", "5", "6", "7", "8", "9", "10" };
 
+/* tasks: groups of workspaces shown left of the tags, each with its own
+ * tags 1..10. Created, renamed and removed at runtime (Mod+n, Mod+Shift+n,
+ * Mod+Shift+Delete) and kept in ~/.dwm/tasks; this list is only used when
+ * that file does not exist yet. */
+static const char *deftasks[] = { "main" };
+
 static const Rule rules[] = {
 	/* xprop(1):
 	 *	WM_CLASS(STRING) = instance, class
@@ -89,9 +95,10 @@ static const Layout layouts[] = {
 #define MODKEY Mod4Mask
 #define TAGKEYS(KEY,TAG) \
 	{ MODKEY,                       KEY,      view,           {.ui = 1 << TAG} }, \
-	{ MODKEY|ControlMask,           KEY,      toggleview,     {.ui = 1 << TAG} }, \
-	{ MODKEY|ShiftMask,             KEY,      tag,            {.ui = 1 << TAG} }, \
-	{ MODKEY|ControlMask|ShiftMask, KEY,      toggletag,      {.ui = 1 << TAG} },
+	{ MODKEY|ShiftMask,             KEY,      tag,            {.ui = 1 << TAG} },
+#define TASKKEYS(KEY,TASK) \
+	{ MODKEY|Mod1Mask,              KEY,      viewtask,       {.i = TASK} }, \
+	{ MODKEY|Mod1Mask|ShiftMask,    KEY,      movetotask,     {.i = TASK} },
 
 /* helper for spawning shell commands in the pre dwm-5.0 fashion */
 #define SHCMD(cmd) { .v = (const char*[]){ "/bin/sh", "-c", cmd, NULL } }
@@ -160,6 +167,23 @@ static const Key keys[] = {
 	TAGKEYS(                        XK_8,                      7)
 	TAGKEYS(                        XK_9,                      8)
 	TAGKEYS(                        XK_0,                      9)
+	/* tasks: Mod+Alt+1..0 view task N, Mod+Alt+Shift+1..0 move the window */
+	TASKKEYS(                       XK_1,                      0)
+	TASKKEYS(                       XK_2,                      1)
+	TASKKEYS(                       XK_3,                      2)
+	TASKKEYS(                       XK_4,                      3)
+	TASKKEYS(                       XK_5,                      4)
+	TASKKEYS(                       XK_6,                      5)
+	TASKKEYS(                       XK_7,                      6)
+	TASKKEYS(                       XK_8,                      7)
+	TASKKEYS(                       XK_9,                      8)
+	TASKKEYS(                       XK_0,                      9)
+	{ MODKEY,                       XK_Prior,  cycletask,      {.i = -1 } },
+	{ MODKEY,                       XK_Next,   cycletask,      {.i = +1 } },
+	{ MODKEY,                       XK_grave,  lasttask,       {0} },
+	{ MODKEY,                       XK_n,      newtask,        {0} },
+	{ MODKEY|ShiftMask,             XK_n,      renametask,     {.i = -1 } },
+	{ MODKEY|ShiftMask,             XK_Delete, deltask,        {0} },
 	/* i3: $mod+Tab workspace back_and_forth */
 	{ MODKEY,                       XK_Tab,    view,           {0} },
 	/* dwm extensions kept out of the way */
@@ -173,13 +197,13 @@ static const Key keys[] = {
 };
 
 /* button definitions */
-/* click can be ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, or ClkRootWin */
+/* click can be ClkTaskCell, ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, or ClkRootWin */
 static const Button buttons[] = {
 	/* click                event mask      button          function        argument */
+	{ ClkTaskCell,          0,              Button1,        viewtask,       {0} },
+	{ ClkTaskCell,          MODKEY,         Button1,        movetotask,     {0} },
+	{ ClkTaskCell,          0,              Button3,        renametask,     {0} },
 	{ ClkTagBar,            0,              Button1,        view,           {0} },
-	{ ClkTagBar,            0,              Button3,        toggleview,     {0} },
-	{ ClkTagBar,            MODKEY,         Button1,        tag,            {0} },
-	{ ClkTagBar,            MODKEY,         Button3,        toggletag,      {0} },
 	{ ClkTaskBar,           0,              Button1,        focustask,      {0} },
 	{ ClkTaskBar,           MODKEY,         Button2,        zoom,           {0} },
 	{ ClkStatusText,        0,              Button1,        spawn,          {.v = calendarcmd } },

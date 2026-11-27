@@ -32,6 +32,7 @@
 #include <strings.h>
 #include <unistd.h>
 #include <sys/select.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <X11/cursorfont.h>
@@ -55,21 +56,31 @@
 #define CLEANMASK(mask)         (mask & ~(numlockmask|LockMask) & (ShiftMask|ControlMask|Mod1Mask|Mod2Mask|Mod3Mask|Mod4Mask|Mod5Mask))
 #define INTERSECT(x,y,w,h,m)    (MAX(0, MIN((x)+(w),(m)->wx+(m)->ww) - MAX((x),(m)->wx)) \
                                * MAX(0, MIN((y)+(h),(m)->wy+(m)->wh) - MAX((y),(m)->wy)))
-#define ISVISIBLE(C)            ((C->tags & C->mon->tagset[C->mon->seltags]))
+#define ISVISIBLE(C)            ((cleaningup || (C)->task == seltask) \
+                               && ((C)->tags & (C)->mon->tagset[(C)->mon->seltags]))
 #define MOUSEMASK               (BUTTONMASK|PointerMotionMask)
 #define WIDTH(X)                ((X)->w)
 #define HEIGHT(X)               ((X)->h)
 #define TAGMASK                 ((1 << LENGTH(tags)) - 1)
+#define NTAGS                   ((unsigned int)LENGTH(tags))
+#define PT(T)                   ((unsigned int)seltask * NTAGS + (T)) /* per task x tag index */
+#define MAXTASKS                32
+#define TASKNAMELEN             64
 #define TEXTW(X)                (drw_fontset_getwidth(drw, (X)) + lrpad)
-#define MFACT(M)                ((M)->mfacts[curtag(M)])
-#define NMASTER(M)              ((M)->nmasters[curtag(M)])
+#define MFACT(M)                ((M)->mfacts[PT(curtag(M))])
+#define NMASTER(M)              ((M)->nmasters[PT(curtag(M))])
 
 /* restart state (see savestate()) */
-#define STATEMAGIC              0x64776d31L /* "dwm1" */
-#define STATEHEAD               4  /* magic, ntags, nmons, selmon */
-#define MONSTATE                6  /* num, seltags, tagset[2], sel, showbar */
+#define STATEMAGIC1             0x64776d31L /* "dwm1": before tasks */
+#define STATEMAGIC              0x64776d32L /* "dwm2" */
+#define STATEHEAD1              4  /* magic, ntags, nmons, selmon */
+#define MONSTATE1               6  /* num, seltags, tagset[2], sel, showbar */
+#define STATEHEAD               7  /* magic, ntags, nmons, selmon, ntasks, seltask, prevtask */
+#define MONSTATE                2  /* num, showbar */
+#define VIEWSTATE               4  /* per task: seltags, tagset[2], sel */
 #define TAGSTATE                5  /* sellt, lt[2], mfact, nmaster */
-#define CLIENTSTATE             5  /* tags, mon, floating, cfact, order */
+#define CLIENTSTATE1            5  /* tags, mon, floating, cfact, order */
+#define CLIENTSTATE             6  /* ... plus task */
 
 /* _NET_WM_MOVERESIZE directions */
 #define MOVERESIZE_SIZE_TOPLEFT      0
@@ -107,7 +118,7 @@ enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
 enum { DwmClientState, DwmState, MotifWMHints, DwmLast }; /* non-EWMH atoms */
 enum { Manager, Xembed, XembedInfo, XLast }; /* Xembed atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
-enum { ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkBorder, ClkTitleBar, ClkTab, ClkRootWin, ClkLast }; /* clicks */
+enum { ClkTaskCell, ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkBorder, ClkTitleBar, ClkTab, ClkRootWin, ClkLast }; /* clicks */
 enum { ModeNormal, ModeResize, ModeMove }; /* binding modes */
 enum { DirLeft, DirDown, DirUp, DirRight }; /* directions */
 enum { RLeft = 1, RRight = 2, RTop = 4, RBottom = 8 }; /* resize anchors */
@@ -143,6 +154,7 @@ struct Client {
 	long savedstate[CLIENTSTATE]; /* last _DWM_CLIENT_STATE written */
 	int statevalid;
 	unsigned int tags;
+	int task; /* index in tasknames */
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
 	int mapped; /* frame currently mapped by showhide() */
 	int notitle; /* _MOTIF_WM_HINTS: no decorations (client-side ones) */
@@ -176,16 +188,24 @@ typedef struct {
 	void (*arrange)(Monitor *);
 } Layout;
 
+/* what a monitor shows inside one task, saved while another task is active */
+typedef struct {
+	unsigned int tagset[2];
+	unsigned int seltags;
+	Window sel;
+} TaskView;
+
 struct Monitor {
 	char ltsymbol[16];
-	float *mfacts;         /* per tag */
-	int *nmasters;         /* per tag */
+	float *mfacts;         /* per task x tag (PT()) */
+	int *nmasters;         /* per task x tag */
 	int num;
 	int by;               /* bar geometry */
 	int mx, my, mw, mh;   /* screen size */
 	int wx, wy, ww, wh;   /* window area  */
 	unsigned int seltags;
-	unsigned int *sellt;   /* active layout slot per tag */
+	unsigned int *sellt;   /* active layout slot per task x tag */
+	TaskView taskview[MAXTASKS]; /* per task; the active one lives in tagset/seltags/sel */
 	unsigned int tagset[2];
 	int showbar;
 	int topbar;
@@ -194,8 +214,9 @@ struct Monitor {
 	Client *stack;
 	Monitor *next;
 	Window barwin;
-	const Layout **lt;     /* two remembered layouts per tag: lt[tag * 2 + slot] */
+	const Layout **lt;     /* two remembered layouts per task x tag: lt[PT(tag) * 2 + slot] */
 	/* bar hit-testing caches, filled by drawbar() */
+	int taskcellx[MAXTASKS + 1];
 	int tagx[33];
 	int statusx;
 	int barw;
@@ -344,8 +365,6 @@ static void titleclick(const Arg *arg);
 static void togglefullscr(const Arg *arg);
 static void togglefloating(const Arg *arg);
 static void togglesplit(const Arg *arg);
-static void toggletag(const Arg *arg);
-static void toggleview(const Arg *arg);
 static void freeicon(Client *c);
 static void unfocus(Client *c, int setfocus);
 static void unmanage(Client *c, int destroyed);
@@ -375,6 +394,24 @@ static int xerror(Display *d, XErrorEvent *ee);
 static int xerrordummy(Display *d, XErrorEvent *ee);
 static int xerrorstart(Display *d, XErrorEvent *ee);
 static void zoom(const Arg *arg);
+/* tasks: groups of workspaces, each with its own tags 1..10 */
+static void cycletask(const Arg *arg);
+static void deltask(const Arg *arg);
+static int drawtaskcell(Monitor *m, int i, int x, const unsigned int *occ);
+static void initpertag(Monitor *m, unsigned int idx);
+static void lasttask(const Arg *arg);
+static void loadtasks(void);
+static void movetotask(const Arg *arg);
+static void newtask(const Arg *arg);
+static void promptend(int commit);
+static void promptkey(XEvent *e);
+static void renametask(const Arg *arg);
+static void savetasks(void);
+static void switchtask(int t);
+static void taskinsert(int pos);
+static void taskremove(int pos);
+static void updatedesktops(void);
+static void viewtask(const Arg *arg);
 
 /* variables */
 static Systray *systray = NULL;
@@ -407,6 +444,12 @@ static int running = 1;
 static int restartwm;      /* re-exec after cleanup() */
 static int cleaningup;     /* cleanup() runs: keep the saved state */
 static int stateready;     /* scan() finished: state may be saved */
+static char (*tasknames)[TASKNAMELEN];
+static int ntasks = 0, seltask = 0, prevtask = 0;
+static int renaming = -1;  /* task whose label is being edited in the bar */
+static char promptbuf[TASKNAMELEN];
+static XIM xim;
+static XIC xic;
 static int sigpipe[2] = { -1, -1 };
 static volatile sig_atomic_t pendingsig;
 static int loadedselmon = -1;
@@ -712,6 +755,8 @@ buttonpress(XEvent *e)
 	XButtonPressedEvent *ev = &e->xbutton;
 
 	click = ClkRootWin;
+	if (renaming >= 0)
+		promptend(1);
 	/* focus monitor if necessary */
 	if ((m = wintomon(ev->window)) && m != selmon) {
 		unfocus(selmon->sel, 1);
@@ -719,13 +764,19 @@ buttonpress(XEvent *e)
 		focus(NULL);
 	}
 	if (ev->window == selmon->barwin) {
-		for (i = 0; i < LENGTH(tags); i++)
+		for (i = 0; i < (unsigned int)ntasks; i++)
+			if (ev->x >= selmon->taskcellx[i] && ev->x < selmon->taskcellx[i + 1]) {
+				click = ClkTaskCell;
+				arg.i = (int)i;
+				break;
+			}
+		for (i = 0; click == ClkRootWin && i < LENGTH(tags); i++)
 			if (ev->x >= selmon->tagx[i] && ev->x < selmon->tagx[i + 1]) {
 				click = ClkTagBar;
 				arg.ui = 1 << i;
 				break;
 			}
-		if (i == LENGTH(tags)) {
+		if (click == ClkRootWin) {
 			for (i = 0; i < (unsigned int)selmon->taskn; i++)
 				if (ev->x >= selmon->taskx[i] && ev->x < selmon->taskx[i + 1]) {
 					click = ClkTaskBar;
@@ -764,7 +815,7 @@ buttonpress(XEvent *e)
 	for (i = 0; i < LENGTH(buttons); i++)
 		if (click == buttons[i].click && buttons[i].func && buttons[i].button == ev->button
 		&& CLEANMASK(buttons[i].mask) == CLEANMASK(ev->state))
-			buttons[i].func(click == ClkTagBar || click == ClkTaskBar || click == ClkTab
+			buttons[i].func(click == ClkTaskCell || click == ClkTagBar || click == ClkTaskBar || click == ClkTab
 				? &arg : &buttons[i].arg);
 }
 
@@ -789,8 +840,9 @@ cleanup(void)
 
 	cleaningup = 1;
 	view(&a);
-	for (i = 0; i < LENGTH(tags); i++)
-		selmon->lt[i * 2 + selmon->sellt[i]] = &foo;
+	for (m = mons; m; m = m->next)
+		for (i = 0; i < MAXTASKS * NTAGS; i++)
+			m->lt[i * 2 + m->sellt[i]] = &foo;
 	for (m = mons; m; m = m->next)
 		while (m->stack)
 			unmanage(m->stack, 0);
@@ -816,6 +868,11 @@ cleanup(void)
 		drw_scm_free(drw, scheme[i], 3);
 	free(scheme);
 	XDestroyWindow(dpy, wmcheckwin);
+	if (xic)
+		XDestroyIC(xic);
+	if (xim)
+		XCloseIM(xim);
+	free(tasknames);
 	drw_free(drw);
 	XSync(dpy, False);
 	XSetInputFocus(dpy, PointerRoot, RevertToPointerRoot, CurrentTime);
@@ -911,12 +968,14 @@ clientmessage(XEvent *e)
 	if (cme->message_type == netatom[NetCurrentDesktop]) {
 		Arg a;
 
-		/* a pager asking for the current desktop must not trigger
-		 * the back-and-forth of view() */
-		if (cme->data.l[0] >= 0 && cme->data.l[0] < (long)LENGTH(tags)
-		&& (1u << cme->data.l[0]) != selmon->tagset[selmon->seltags]) {
-			a.ui = 1u << cme->data.l[0];
-			view(&a);
+		/* desktop = task * NTAGS + tag. A pager asking for the current
+		 * desktop must not trigger the back-and-forth of view(). */
+		if (cme->data.l[0] >= 0 && cme->data.l[0] < (long)(ntasks * NTAGS)) {
+			switchtask((int)(cme->data.l[0] / NTAGS));
+			if ((1u << (cme->data.l[0] % NTAGS)) != selmon->tagset[selmon->seltags]) {
+				a.ui = 1u << (cme->data.l[0] % NTAGS);
+				view(&a);
+			}
 		}
 		return;
 	}
@@ -925,10 +984,13 @@ clientmessage(XEvent *e)
 	if (cme->message_type == netatom[NetWMDesktop]) {
 		unsigned long d = (unsigned long)cme->data.l[0] & 0xFFFFFFFFUL;
 		unsigned int newtags = d == 0xFFFFFFFFUL ? TAGMASK
-			: d < LENGTH(tags) ? 1u << d : 0;
+			: d < ntasks * NTAGS ? 1u << (d % NTAGS) : 0;
+		int newtask = d == 0xFFFFFFFFUL || d >= ntasks * NTAGS
+			? c->task : (int)(d / NTAGS);
 
-		if (newtags && newtags != c->tags) {
+		if (newtags && (newtags != c->tags || newtask != c->task)) {
 			c->tags = newtags;
+			c->task = newtask;
 			focus(NULL);
 			arrange(c->mon);
 		}
@@ -1093,18 +1155,28 @@ createmon(void)
 	m->tagset[0] = m->tagset[1] = 1;
 	m->showbar = showbar;
 	m->topbar = topbar;
-	m->lt = ecalloc(LENGTH(tags) * 2, sizeof *m->lt);
-	m->sellt = ecalloc(LENGTH(tags), sizeof *m->sellt);
-	m->mfacts = ecalloc(LENGTH(tags), sizeof *m->mfacts);
-	m->nmasters = ecalloc(LENGTH(tags), sizeof *m->nmasters);
-	for (i = 0; i < LENGTH(tags); i++) {
-		m->mfacts[i] = mfact;
-		m->nmasters[i] = nmaster;
-		m->lt[i * 2] = &layouts[0];
-		m->lt[i * 2 + 1] = &layouts[1 % LENGTH(layouts)];
-	}
+	/* sized for MAXTASKS so adding or removing a task never reallocates */
+	m->lt = ecalloc(MAXTASKS * NTAGS * 2, sizeof *m->lt);
+	m->sellt = ecalloc(MAXTASKS * NTAGS, sizeof *m->sellt);
+	m->mfacts = ecalloc(MAXTASKS * NTAGS, sizeof *m->mfacts);
+	m->nmasters = ecalloc(MAXTASKS * NTAGS, sizeof *m->nmasters);
+	for (i = 0; i < MAXTASKS * NTAGS; i++)
+		initpertag(m, i);
+	for (i = 0; i < MAXTASKS; i++)
+		m->taskview[i].tagset[0] = m->taskview[i].tagset[1] = 1;
 	snprintf(m->ltsymbol, sizeof(m->ltsymbol), "%s", layouts[0].symbol);
 	return m;
+}
+
+/* Default layouts and factors of one task x tag slot. */
+void
+initpertag(Monitor *m, unsigned int idx)
+{
+	m->mfacts[idx] = mfact;
+	m->nmasters[idx] = nmaster;
+	m->sellt[idx] = 0;
+	m->lt[idx * 2] = &layouts[0];
+	m->lt[idx * 2 + 1] = &layouts[1 % LENGTH(layouts)];
 }
 
 /* Layouts are remembered per tag so each workspace keeps its own. When
@@ -1112,7 +1184,7 @@ createmon(void)
 const Layout *
 curlayout(Monitor *m)
 {
-	unsigned int t = curtag(m);
+	unsigned int t = PT(curtag(m));
 
 	return m->lt[t * 2 + m->sellt[t]];
 }
@@ -1501,6 +1573,60 @@ drawtag(Monitor *m, unsigned int i, int x, unsigned int occ, unsigned int urg)
 	return w;
 }
 
+/* Task cell, left of the tags: same look as a tag cell, with the task's
+ * label. occ[i] has bit 0 set when the task has windows, bit 1 when one of
+ * them is urgent. The cell being renamed shows the edit buffer. */
+int
+drawtaskcell(Monitor *m, int i, int x, const unsigned int *occ)
+{
+	int editing = i == renaming && m == selmon;
+	int selected = i == seltask || editing;
+	int urgent = !editing && (occ[i] & 2);
+	int occupied = !editing && (occ[i] & 1);
+	int numw, dotw, w, tx;
+	char label[TASKNAMELEN], text[TASKNAMELEN + 8];
+
+	if (editing)
+		snprintf(text, sizeof text, " %s_", promptbuf);
+	else {
+		truncatechars(tasknames[i], label, sizeof label, 16);
+		snprintf(text, sizeof text, " %s", label);
+	}
+	numw = textwidth(text);
+	dotw = textwidth("\xc2\xb7");
+	w = numw + dotw + (selected ? 2 : 0);
+
+	if (selected) {
+		drw_setscheme(drw, scheme[SchemeSel]);
+		drw_rect(drw, x, 0, w, bh, 1, 1);
+		tx = x + 1;
+	} else {
+		tx = x;
+		if (urgent) {
+			drw_setscheme(drw, scheme[SchemeUrg]);
+			drw_rect(drw, x, 0, w, bh, 1, 1);
+		}
+	}
+
+	drw_setscheme(drw, scheme[selected ? SchemeSel : urgent ? SchemeUrg
+			: occupied ? SchemeTagOcc : SchemeTagEmpty]);
+	drw_text(drw, tx, 0, numw, bh, 0, text, 0);
+
+	if (occupied) {
+		drw_setscheme(drw, scheme[selected ? SchemeSel : urgent ? SchemeUrg : SchemeDot]);
+		drw_text(drw, tx + numw, 0, dotw, bh, 0, "\xc2\xb7", 0);
+	}
+
+	if (selected) {
+		drw_setscheme(drw, scheme[SchemeAccent]);
+		drw_rect(drw, x, 0, w, 1, 1, 0);
+		drw_rect(drw, x, bh - 1, w, 1, 1, 0);
+		drw_rect(drw, x, 0, 1, bh, 1, 0);
+		drw_rect(drw, x + w - 1, 0, 1, bh, 1, 0);
+	}
+	return w;
+}
+
 int
 drawmode(int x)
 {
@@ -1809,8 +1935,9 @@ void
 drawbar(Monitor *m)
 {
 	int x, tw = 0, traysw = 0, barw;
-	unsigned int i, occ = 0, urg = 0;
+	unsigned int i, occ = 0, urg = 0, taskocc[MAXTASKS] = {0};
 	Client *c;
+	Monitor *om;
 
 	if (!m->showbar)
 		return;
@@ -1827,7 +1954,14 @@ drawbar(Monitor *m)
 	drw_setscheme(drw, scheme[SchemeNorm]);
 	drw_rect(drw, 0, 0, barw, bh, 1, 1);
 
+	/* a task is marked occupied/urgent from any monitor */
+	for (om = mons; om; om = om->next)
+		for (c = om->clients; c; c = c->next)
+			if (c->task >= 0 && c->task < MAXTASKS)
+				taskocc[c->task] |= c->isurgent ? 3 : 1;
 	for (c = m->clients; c; c = c->next) {
+		if (c->task != seltask)
+			continue;
 		occ |= c->tags;
 		if (c->isurgent)
 			urg |= c->tags;
@@ -1846,6 +1980,13 @@ drawbar(Monitor *m)
 	}
 
 	x = 0;
+	for (i = 0; i < (unsigned int)ntasks; i++) {
+		m->taskcellx[i] = x;
+		x += drawtaskcell(m, i, x, taskocc);
+	}
+	m->taskcellx[ntasks] = x;
+	x = drawseparator(x);
+
 	for (i = 0; i < LENGTH(tags); i++) {
 		m->tagx[i] = x;
 		x += drawtag(m, i, x, occ, urg);
@@ -2292,6 +2433,10 @@ keypress(XEvent *e)
 	KeySym keysym;
 	XKeyEvent *ev;
 
+	if (renaming >= 0) {
+		promptkey(e);
+		return;
+	}
 	ev = &e->xkey;
 	keysym = XKeycodeToKeysym(dpy, (KeyCode)ev->keycode, 0);
 	if (wmmode != ModeNormal && modekey(e, keysym))
@@ -2350,8 +2495,10 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 	if (XGetTransientForHint(dpy, w, &trans) && (t = wintoclient(trans))) {
 		c->mon = t->mon;
 		c->tags = t->tags;
+		c->task = t->task;
 	} else {
 		c->mon = selmon;
+		c->task = seltask;
 		applyrules(c);
 	}
 	updatewindowtype(c);
@@ -2371,6 +2518,7 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 		c->isfloating = st[2] ? 1 : 0;
 		if (st[3] > 0)
 			c->cfact = st[3] / 1000.0;
+		c->task = st[5] >= 0 && st[5] < ntasks ? (int)st[5] : 0;
 	}
 	updatemotifhints(c);
 	updatesizehints(c);
@@ -3105,6 +3253,7 @@ setclientprops(Client *c, long order)
 	st[2] = c->isfullscreen ? c->oldstate : c->isfloating;
 	st[3] = (long)(c->cfact * 1000 + 0.5);
 	st[4] = order;
+	st[5] = c->task;
 	if (c->statevalid && !memcmp(st, c->savedstate, sizeof st))
 		return;
 	memcpy(c->savedstate, st, sizeof st);
@@ -3112,7 +3261,7 @@ setclientprops(Client *c, long order)
 	XChangeProperty(dpy, c->win, dwmatom[DwmClientState], XA_CARDINAL, 32,
 		PropModeReplace, (unsigned char *)st, CLIENTSTATE);
 	desk = (c->tags & TAGMASK) == TAGMASK ? 0xFFFFFFFFL
-		: (long)(ffs((int)c->tags) - 1);
+		: (long)(c->task * NTAGS + ffs((int)c->tags) - 1);
 	XChangeProperty(dpy, c->win, netatom[NetWMDesktop], XA_CARDINAL, 32,
 		PropModeReplace, (unsigned char *)&desk, 1);
 }
@@ -3127,8 +3276,11 @@ readclientstate(Window w, long *st)
 
 	if (XGetWindowProperty(dpy, w, dwmatom[DwmClientState], 0, CLIENTSTATE,
 		False, XA_CARDINAL, &type, &format, &n, &after, &p) == Success && p) {
-		if (type == XA_CARDINAL && format == 32 && n == CLIENTSTATE) {
-			memcpy(st, p, CLIENTSTATE * sizeof(long));
+		/* CLIENTSTATE1: written before tasks existed, task 0 */
+		if (type == XA_CARDINAL && format == 32
+		&& (n == CLIENTSTATE || n == CLIENTSTATE1)) {
+			st[CLIENTSTATE - 1] = 0;
+			memcpy(st, p, n * sizeof(long));
 			ok = 1;
 		}
 		XFree(p);
@@ -3136,9 +3288,25 @@ readclientstate(Window w, long *st)
 	return ok;
 }
 
-/* Monitor tags, layouts, factors and the focused client on the root window
- * (_DWM_STATE), client tags/floating/order on each client, plus the EWMH
- * desktop properties. Only changed values are written. */
+/* What monitor m shows inside task t: live for the active task. */
+static TaskView
+taskviewof(Monitor *m, int t)
+{
+	TaskView tv;
+
+	if (t != seltask)
+		return m->taskview[t];
+	tv.tagset[0] = m->tagset[0];
+	tv.tagset[1] = m->tagset[1];
+	tv.seltags = m->seltags;
+	tv.sel = m->sel ? m->sel->win : 0;
+	return tv;
+}
+
+/* Tasks, monitor tags, layouts, factors and the focused clients on the root
+ * window (_DWM_STATE), client tags/task/floating/order on each client, plus
+ * the EWMH desktop properties. Only changed values are written. The task
+ * labels live in ~/.dwm/tasks (savetasks()). */
 void
 savestate(void)
 {
@@ -3147,29 +3315,37 @@ savestate(void)
 	static long prevdesk = -1;
 	Monitor *m;
 	Client *c;
+	TaskView tv;
 	long *buf, order, desk;
 	size_t n, k, nmons = 0;
 	unsigned int t;
+	int task;
 
 	if (!stateready || cleaningup || !selmon)
 		return;
 	for (m = mons; m; m = m->next)
 		nmons++;
-	n = STATEHEAD + nmons * (MONSTATE + TAGSTATE * LENGTH(tags));
+	n = STATEHEAD + nmons * (MONSTATE + ntasks * (VIEWSTATE + TAGSTATE * NTAGS));
 	buf = ecalloc(n, sizeof(long));
 	buf[0] = STATEMAGIC;
-	buf[1] = LENGTH(tags);
+	buf[1] = NTAGS;
 	buf[2] = nmons;
 	buf[3] = selmon->num;
+	buf[4] = ntasks;
+	buf[5] = seltask;
+	buf[6] = prevtask;
 	k = STATEHEAD;
 	for (m = mons; m; m = m->next) {
 		buf[k++] = m->num;
-		buf[k++] = m->seltags;
-		buf[k++] = m->tagset[0];
-		buf[k++] = m->tagset[1];
-		buf[k++] = m->sel ? (long)m->sel->win : 0;
 		buf[k++] = m->showbar;
-		for (t = 0; t < LENGTH(tags); t++) {
+		for (task = 0; task < ntasks; task++) {
+			tv = taskviewof(m, task);
+			buf[k++] = tv.seltags;
+			buf[k++] = tv.tagset[0];
+			buf[k++] = tv.tagset[1];
+			buf[k++] = (long)tv.sel;
+		}
+		for (t = 0; t < ntasks * NTAGS; t++) {
 			buf[k++] = m->sellt[t];
 			buf[k++] = layoutindex(m->lt[t * 2]);
 			buf[k++] = layoutindex(m->lt[t * 2 + 1]);
@@ -3187,7 +3363,7 @@ savestate(void)
 		prevn = n;
 	} else
 		free(buf);
-	desk = curtag(selmon);
+	desk = seltask * NTAGS + curtag(selmon);
 	if (desk != prevdesk) {
 		XChangeProperty(dpy, root, netatom[NetCurrentDesktop], XA_CARDINAL, 32,
 			PropModeReplace, (unsigned char *)&desk, 1);
@@ -3195,58 +3371,100 @@ savestate(void)
 	}
 }
 
-/* Apply _DWM_STATE to the monitors before scan() adopts the clients. */
+static void
+loadtagstate(Monitor *m, unsigned int idx, const long *st)
+{
+	long v;
+
+	m->sellt[idx] = st[0] & 1;
+	if (st[1] >= 0 && st[1] < (long)LENGTH(layouts))
+		m->lt[idx * 2] = &layouts[st[1]];
+	if (st[2] >= 0 && st[2] < (long)LENGTH(layouts))
+		m->lt[idx * 2 + 1] = &layouts[st[2]];
+	v = st[3];
+	if (v >= 50 && v <= 950)
+		m->mfacts[idx] = v / 1000.0;
+	if (st[4] >= 0 && st[4] < 64)
+		m->nmasters[idx] = (int)st[4];
+}
+
+static void
+loadview(TaskView *tv, long seltags, long tagset0, long tagset1, long sel)
+{
+	tv->seltags = seltags & 1;
+	if (tagset0 & TAGMASK)
+		tv->tagset[0] = tagset0 & TAGMASK;
+	if (tagset1 & TAGMASK)
+		tv->tagset[1] = tagset1 & TAGMASK;
+	tv->sel = (Window)sel;
+}
+
+/* Apply _DWM_STATE to the monitors before scan() adopts the clients. The
+ * "dwm1" state of a dwm without tasks is read as task 0. */
 void
 loadstate(void)
 {
 	Atom type;
-	int format;
-	unsigned long n, after, k;
+	int format, task, savedtasks, v1;
+	unsigned long n, after, k, monlen, head;
 	unsigned char *p = NULL;
-	long *st, nmons, i, v;
+	long *st, nmons, i;
 	unsigned int t;
 	Monitor *m;
 
-	if (XGetWindowProperty(dpy, root, dwmatom[DwmState], 0, 1 << 16, False,
+	if (XGetWindowProperty(dpy, root, dwmatom[DwmState], 0, 1 << 20, False,
 		XA_CARDINAL, &type, &format, &n, &after, &p) != Success || !p)
 		return;
 	st = (long *)p;
-	if (type != XA_CARDINAL || format != 32 || n < STATEHEAD
-	|| st[0] != STATEMAGIC || st[1] != (long)LENGTH(tags)) {
+	if (type != XA_CARDINAL || format != 32 || n < STATEHEAD1
+	|| (st[0] != STATEMAGIC && st[0] != STATEMAGIC1)
+	|| st[1] != (long)NTAGS
+	|| (st[0] == STATEMAGIC && (n < STATEHEAD || st[4] < 1 || st[4] > MAXTASKS))) {
 		XFree(p);
 		return;
 	}
+	v1 = st[0] == STATEMAGIC1;
 	nmons = st[2];
 	loadedselmon = (int)st[3];
-	k = STATEHEAD;
-	for (i = 0; i < nmons && k + MONSTATE + TAGSTATE * LENGTH(tags) <= n; i++) {
+	savedtasks = v1 ? 1 : (int)st[4];
+	head = v1 ? STATEHEAD1 : STATEHEAD;
+	monlen = v1 ? MONSTATE1 + TAGSTATE * NTAGS
+		: MONSTATE + savedtasks * (VIEWSTATE + TAGSTATE * NTAGS);
+	if (!v1) {
+		seltask = st[5] >= 0 && st[5] < ntasks ? (int)st[5] : 0;
+		prevtask = st[6] >= 0 && st[6] < ntasks ? (int)st[6] : seltask;
+	}
+	k = head;
+	for (i = 0; i < nmons && k + monlen <= n; i++, k += monlen) {
 		for (m = mons; m && m->num != st[k]; m = m->next);
-		if (!m) {
-			k += MONSTATE + TAGSTATE * LENGTH(tags);
+		if (!m)
 			continue;
+		if (v1) {
+			loadview(&m->taskview[0], st[k + 1], st[k + 2], st[k + 3], st[k + 4]);
+			m->showbar = st[k + 5] ? 1 : 0;
+			for (t = 0; t < NTAGS; t++)
+				loadtagstate(m, t, st + k + MONSTATE1 + t * TAGSTATE);
+		} else {
+			const long *vs = st + k + MONSTATE;
+			const long *ts = vs + savedtasks * VIEWSTATE;
+
+			m->showbar = st[k + 1] ? 1 : 0;
+			for (task = 0; task < savedtasks && task < ntasks; task++) {
+				loadview(&m->taskview[task], vs[task * VIEWSTATE],
+					vs[task * VIEWSTATE + 1], vs[task * VIEWSTATE + 2],
+					vs[task * VIEWSTATE + 3]);
+				for (t = 0; t < NTAGS; t++)
+					loadtagstate(m, task * NTAGS + t,
+						ts + (task * NTAGS + t) * TAGSTATE);
+			}
 		}
-		m->seltags = st[k + 1] & 1;
-		if (st[k + 2] & TAGMASK)
-			m->tagset[0] = st[k + 2] & TAGMASK;
-		if (st[k + 3] & TAGMASK)
-			m->tagset[1] = st[k + 3] & TAGMASK;
+		/* the active task's view is the monitor's live state */
+		m->tagset[0] = m->taskview[seltask].tagset[0];
+		m->tagset[1] = m->taskview[seltask].tagset[1];
+		m->seltags = m->taskview[seltask].seltags;
 		if (m->num >= 0 && m->num < (int)LENGTH(loadedsel))
-			loadedsel[m->num] = (Window)st[k + 4];
-		m->showbar = st[k + 5] ? 1 : 0;
+			loadedsel[m->num] = m->taskview[seltask].sel;
 		updatebarpos(m);
-		k += MONSTATE;
-		for (t = 0; t < LENGTH(tags); t++, k += TAGSTATE) {
-			m->sellt[t] = st[k] & 1;
-			if (st[k + 1] >= 0 && st[k + 1] < (long)LENGTH(layouts))
-				m->lt[t * 2] = &layouts[st[k + 1]];
-			if (st[k + 2] >= 0 && st[k + 2] < (long)LENGTH(layouts))
-				m->lt[t * 2 + 1] = &layouts[st[k + 2]];
-			v = st[k + 3];
-			if (v >= 50 && v <= 950)
-				m->mfacts[t] = v / 1000.0;
-			if (st[k + 4] >= 0 && st[k + 4] < 64)
-				m->nmasters[t] = (int)st[k + 4];
-		}
 	}
 	XFree(p);
 }
@@ -3826,7 +4044,7 @@ setfullscreen(Client *c, int fullscreen)
 void
 setlayout(const Arg *arg)
 {
-	unsigned int t = curtag(selmon);
+	unsigned int t = PT(curtag(selmon));
 	unsigned int slot;
 
 	if (!arg || !arg->v || arg->v != selmon->lt[t * 2 + selmon->sellt[t]])
@@ -4062,6 +4280,9 @@ setup(void)
 	sigaction(SIGTERM, &sa, NULL);
 	sigaction(SIGINT, &sa, NULL);
 
+	/* task labels (~/.dwm/tasks), before the monitors are created */
+	loadtasks();
+
 	/* init screen */
 	screen = DefaultScreen(dpy);
 	sw = DisplayWidth(dpy, screen);
@@ -4149,24 +4370,12 @@ setup(void)
 	XChangeProperty(dpy, root, netatom[NetSupported], XA_ATOM, 32,
 		PropModeReplace, (unsigned char *) netatom, NetLast);
 	XDeleteProperty(dpy, root, netatom[NetClientList]);
-	/* EWMH desktops: one per tag */
-	{
-		long ndesk = LENGTH(tags);
-		char names[512];
-		size_t len = 0, l;
-
-		XChangeProperty(dpy, root, netatom[NetNumberOfDesktops], XA_CARDINAL, 32,
-			PropModeReplace, (unsigned char *)&ndesk, 1);
-		for (i = 0; i < (int)LENGTH(tags); i++) {
-			l = strlen(tags[i]) + 1;
-			if (len + l > sizeof names)
-				break;
-			memcpy(names + len, tags[i], l);
-			len += l;
-		}
-		XChangeProperty(dpy, root, netatom[NetDesktopNames], utf8string, 8,
-			PropModeReplace, (unsigned char *)names, len);
-	}
+	/* EWMH desktops: one per tag of every task */
+	updatedesktops();
+	/* input method for the task label prompt (dead keys, UTF-8) */
+	if (XSetLocaleModifiers("") && (xim = XOpenIM(dpy, NULL, NULL, NULL)))
+		xic = XCreateIC(xim, XNInputStyle, XIMPreeditNothing | XIMStatusNothing,
+			XNClientWindow, root, XNFocusWindow, root, NULL);
 	/* select events */
 	wa.cursor = cursor[CurNormal]->cursor;
 	wa.event_mask = SubstructureRedirectMask|SubstructureNotifyMask
@@ -4439,33 +4648,6 @@ togglesplit(const Arg *arg)
 
 	a.v = curlayout(selmon)->arrange == tile ? &layouts[1] : &layouts[0];
 	setlayout(&a);
-}
-
-void
-toggletag(const Arg *arg)
-{
-	unsigned int newtags;
-
-	if (!selmon->sel)
-		return;
-	newtags = selmon->sel->tags ^ (arg->ui & TAGMASK);
-	if (newtags) {
-		selmon->sel->tags = newtags;
-		focus(NULL);
-		arrange(selmon);
-	}
-}
-
-void
-toggleview(const Arg *arg)
-{
-	unsigned int newtagset = selmon->tagset[selmon->seltags] ^ (arg->ui & TAGMASK);
-
-	if (newtagset) {
-		selmon->tagset[selmon->seltags] = newtagset;
-		focus(NULL);
-		arrange(selmon);
-	}
 }
 
 void
@@ -4925,6 +5107,417 @@ updatewmhints(Client *c)
 			c->neverfocus = 0;
 		XFree(wmh);
 	}
+}
+
+/* ~/.dwm/tasks: one task label per line, read at startup. */
+static int
+taskspath(char *path, size_t size, const char *suffix)
+{
+	const char *home = getenv("HOME");
+
+	if (!home || !*home)
+		return 0;
+	return snprintf(path, size, "%s/.dwm/tasks%s", home, suffix) < (int)size;
+}
+
+/* Copy a label, cut at a UTF-8 character boundary. */
+static void
+copytaskname(char *dst, const char *src)
+{
+	size_t n = strlen(src);
+
+	if (n > TASKNAMELEN - 1) {
+		n = TASKNAMELEN - 1;
+		while (n > 0 && ((unsigned char)src[n] & 0xC0) == 0x80)
+			n--;
+	}
+	memcpy(dst, src, n);
+	dst[n] = '\0';
+}
+
+void
+loadtasks(void)
+{
+	char path[PATH_MAX], line[256];
+	FILE *f;
+	size_t l;
+	unsigned int i;
+
+	tasknames = ecalloc(MAXTASKS, sizeof *tasknames);
+	ntasks = 0;
+	if (taskspath(path, sizeof path, "") && (f = fopen(path, "r"))) {
+		while (ntasks < MAXTASKS && fgets(line, sizeof line, f)) {
+			l = strcspn(line, "\r\n");
+			line[l] = '\0';
+			if (*line)
+				copytaskname(tasknames[ntasks++], line);
+		}
+		fclose(f);
+	}
+	for (i = 0; !ntasks && i < LENGTH(deftasks) && i < MAXTASKS; i++)
+		copytaskname(tasknames[i], deftasks[i]);
+	if (!ntasks)
+		ntasks = i;
+	if (!ntasks)
+		copytaskname(tasknames[ntasks++], "1");
+	seltask = prevtask = 0;
+}
+
+/* Written atomically so a crash never leaves a half file. */
+void
+savetasks(void)
+{
+	char path[PATH_MAX], tmp[PATH_MAX], suffix[32], *slash;
+	FILE *f;
+	int i, ok;
+
+	snprintf(suffix, sizeof suffix, ".%ld", (long)getpid());
+	if (!taskspath(path, sizeof path, "") || !taskspath(tmp, sizeof tmp, suffix))
+		return;
+	if ((slash = strrchr(path, '/'))) {
+		*slash = '\0';
+		mkdir(path, 0755);
+		*slash = '/';
+	}
+	if (!(f = fopen(tmp, "w"))) {
+		fprintf(stderr, "dwm: cannot write %s: %s\n", tmp, strerror(errno));
+		return;
+	}
+	for (i = 0; i < ntasks; i++)
+		fprintf(f, "%s\n", tasknames[i]);
+	ok = !ferror(f);
+	if (fclose(f) || !ok || rename(tmp, path) == -1) {
+		fprintf(stderr, "dwm: cannot write %s: %s\n", path, strerror(errno));
+		unlink(tmp);
+	}
+}
+
+/* EWMH desktops: every tag of every task, desktop = task * NTAGS + tag,
+ * named "<task>:<tag>". */
+void
+updatedesktops(void)
+{
+	long ndesk = ntasks * NTAGS;
+	size_t size = ndesk * (TASKNAMELEN + 16), len = 0;
+	char *names = ecalloc(1, size);
+	int t;
+	unsigned int i;
+
+	XChangeProperty(dpy, root, netatom[NetNumberOfDesktops], XA_CARDINAL, 32,
+		PropModeReplace, (unsigned char *)&ndesk, 1);
+	for (t = 0; t < ntasks; t++)
+		for (i = 0; i < NTAGS; i++)
+			len += snprintf(names + len, size - len, "%s:%s", tasknames[t], tags[i]) + 1;
+	XChangeProperty(dpy, root, netatom[NetDesktopNames],
+		XInternAtom(dpy, "UTF8_STRING", False), 8,
+		PropModeReplace, (unsigned char *)names, len);
+	free(names);
+}
+
+/* Make task t the active one on every monitor. Each monitor keeps, per
+ * task, its viewed tags and its focused window. */
+void
+switchtask(int t)
+{
+	Monitor *m;
+	Client *c;
+	TaskView *tv;
+
+	if (t < 0 || t >= ntasks || t == seltask)
+		return;
+	if (selmon->sel)
+		unfocus(selmon->sel, 0);
+	for (m = mons; m; m = m->next) {
+		tv = &m->taskview[seltask];
+		tv->tagset[0] = m->tagset[0];
+		tv->tagset[1] = m->tagset[1];
+		tv->seltags = m->seltags;
+		tv->sel = m->sel ? m->sel->win : 0;
+	}
+	prevtask = seltask;
+	seltask = t;
+	for (m = mons; m; m = m->next) {
+		tv = &m->taskview[t];
+		m->tagset[0] = tv->tagset[0];
+		m->tagset[1] = tv->tagset[1];
+		m->seltags = tv->seltags;
+		c = tv->sel ? wintoclient(tv->sel) : NULL;
+		if (!c || c->mon != m || !ISVISIBLE(c))
+			for (c = m->stack; c && !ISVISIBLE(c); c = c->snext);
+		if (c) {
+			detachstack(c);
+			attachstack(c);
+		}
+		m->sel = c;
+		snprintf(m->ltsymbol, sizeof m->ltsymbol, "%s", curlayout(m)->symbol);
+	}
+	arrange(NULL);
+	focus(selmon->sel);
+}
+
+void
+viewtask(const Arg *arg)
+{
+	if (arg->i == seltask) {
+		/* the active task again: back and forth, like the tags */
+		if (autobackandforth && prevtask != seltask)
+			switchtask(prevtask);
+		return;
+	}
+	switchtask(arg->i);
+}
+
+void
+cycletask(const Arg *arg)
+{
+	switchtask(((seltask + arg->i) % ntasks + ntasks) % ntasks);
+}
+
+void
+lasttask(const Arg *arg)
+{
+	(void)arg;
+	switchtask(prevtask);
+}
+
+/* Move the focused window to another task, keeping its tags. */
+void
+movetotask(const Arg *arg)
+{
+	Client *c = selmon->sel;
+
+	if (!c || arg->i < 0 || arg->i >= ntasks || arg->i == c->task)
+		return;
+	c->task = arg->i;
+	focus(NULL);
+	arrange(c->mon);
+}
+
+/* Open a task slot at pos: later tasks, their windows and per-task state
+ * move up by one. */
+void
+taskinsert(int pos)
+{
+	Monitor *m;
+	Client *c;
+	unsigned int from = pos * NTAGS, cnt = (ntasks - pos) * NTAGS, i;
+
+	memmove(tasknames + pos + 1, tasknames + pos, (ntasks - pos) * sizeof *tasknames);
+	for (m = mons; m; m = m->next) {
+		memmove(m->taskview + pos + 1, m->taskview + pos,
+			(ntasks - pos) * sizeof *m->taskview);
+		memset(&m->taskview[pos], 0, sizeof m->taskview[pos]);
+		m->taskview[pos].tagset[0] = m->taskview[pos].tagset[1] = 1;
+		memmove(m->lt + (from + NTAGS) * 2, m->lt + from * 2, cnt * 2 * sizeof *m->lt);
+		memmove(m->sellt + from + NTAGS, m->sellt + from, cnt * sizeof *m->sellt);
+		memmove(m->mfacts + from + NTAGS, m->mfacts + from, cnt * sizeof *m->mfacts);
+		memmove(m->nmasters + from + NTAGS, m->nmasters + from, cnt * sizeof *m->nmasters);
+		for (i = 0; i < NTAGS; i++)
+			initpertag(m, from + i);
+		for (c = m->clients; c; c = c->next)
+			if (c->task >= pos)
+				c->task++;
+	}
+	ntasks++;
+	if (seltask >= pos)
+		seltask++;
+	if (prevtask >= pos)
+		prevtask++;
+}
+
+/* Close the slot of task pos, which must have no windows and not be the
+ * active task. */
+void
+taskremove(int pos)
+{
+	Monitor *m;
+	Client *c;
+	unsigned int from = pos * NTAGS, cnt = (ntasks - pos - 1) * NTAGS, i;
+
+	memmove(tasknames + pos, tasknames + pos + 1, (ntasks - pos - 1) * sizeof *tasknames);
+	for (m = mons; m; m = m->next) {
+		memmove(m->taskview + pos, m->taskview + pos + 1,
+			(ntasks - pos - 1) * sizeof *m->taskview);
+		memmove(m->lt + from * 2, m->lt + (from + NTAGS) * 2, cnt * 2 * sizeof *m->lt);
+		memmove(m->sellt + from, m->sellt + from + NTAGS, cnt * sizeof *m->sellt);
+		memmove(m->mfacts + from, m->mfacts + from + NTAGS, cnt * sizeof *m->mfacts);
+		memmove(m->nmasters + from, m->nmasters + from + NTAGS, cnt * sizeof *m->nmasters);
+		for (i = 0; i < NTAGS; i++)
+			initpertag(m, (ntasks - 1) * NTAGS + i);
+		memset(&m->taskview[ntasks - 1], 0, sizeof m->taskview[ntasks - 1]);
+		m->taskview[ntasks - 1].tagset[0] = m->taskview[ntasks - 1].tagset[1] = 1;
+		for (c = m->clients; c; c = c->next)
+			if (c->task > pos)
+				c->task--;
+	}
+	ntasks--;
+	if (seltask > pos)
+		seltask--;
+	if (prevtask > pos)
+		prevtask--;
+	else if (prevtask == pos)
+		prevtask = seltask;
+}
+
+/* A new task right after the active one, named with the lowest free
+ * number; the bar then asks for its label (Escape keeps the number). */
+void
+newtask(const Arg *arg)
+{
+	char name[16];
+	int n, t, used, pos = seltask + 1;
+
+	(void)arg;
+	if (ntasks >= MAXTASKS)
+		return;
+	for (n = 1; ; n++) {
+		snprintf(name, sizeof name, "%d", n);
+		for (used = 0, t = 0; t < ntasks && !used; t++)
+			used = !strcmp(tasknames[t], name);
+		if (!used)
+			break;
+	}
+	taskinsert(pos);
+	copytaskname(tasknames[pos], name);
+	savetasks();
+	updatedesktops();
+	switchtask(pos);
+	renametask(&(Arg){ .i = pos });
+}
+
+/* Remove the active task; its windows go, with their tags, to the
+ * neighbouring task, which becomes the active one. */
+void
+deltask(const Arg *arg)
+{
+	Monitor *m;
+	Client *c;
+	int t = seltask, dest = seltask > 0 ? seltask - 1 : 1;
+
+	(void)arg;
+	if (ntasks <= 1)
+		return;
+	switchtask(dest);
+	for (m = mons; m; m = m->next)
+		for (c = m->clients; c; c = c->next)
+			if (c->task == t)
+				c->task = dest;
+	taskremove(t);
+	savetasks();
+	updatedesktops();
+	arrange(NULL);
+	focus(NULL);
+}
+
+/* Edit a task's label in place, in its bar cell; the keyboard is grabbed
+ * until Return (keep, empty = unchanged) or Escape (cancel). */
+void
+renametask(const Arg *arg)
+{
+	int t = arg->i < 0 ? seltask : arg->i, i;
+
+	if (t >= ntasks)
+		return;
+	if (renaming >= 0)
+		promptend(0);
+	if (wmmode != ModeNormal)
+		setmode(&(Arg){ .i = wmmode });
+	/* the key that started the prompt may still be held: retry briefly */
+	for (i = 0; i < 200; i++) {
+		if (XGrabKeyboard(dpy, root, False, GrabModeAsync, GrabModeAsync,
+			CurrentTime) == GrabSuccess)
+			break;
+		usleep(1000);
+	}
+	if (i == 200)
+		return;
+	renaming = t;
+	promptbuf[0] = '\0';
+	if (xic)
+		XSetICFocus(xic);
+	drawbars();
+}
+
+void
+promptend(int commit)
+{
+	char *s = promptbuf, *e;
+
+	if (renaming < 0)
+		return;
+	/* trim the label */
+	while (*s == ' ')
+		s++;
+	for (e = s + strlen(s); e > s && e[-1] == ' '; e--);
+	*e = '\0';
+	if (commit && *s && renaming < ntasks && strcmp(tasknames[renaming], s)) {
+		copytaskname(tasknames[renaming], s);
+		savetasks();
+		updatedesktops();
+	}
+	renaming = -1;
+	promptbuf[0] = '\0';
+	if (xic)
+		XUnsetICFocus(xic);
+	XUngrabKeyboard(dpy, CurrentTime);
+	drawbars();
+}
+
+void
+promptkey(XEvent *e)
+{
+	XKeyEvent *ev = &e->xkey;
+	char buf[64];
+	KeySym ksym = NoSymbol;
+	Status status;
+	size_t len, cur;
+	int n;
+
+	if (XFilterEvent(e, None))
+		return;
+	if (xic)
+		n = Xutf8LookupString(xic, ev, buf, sizeof buf - 1, &ksym, &status);
+	else
+		n = XLookupString(ev, buf, sizeof buf - 1, &ksym, NULL);
+	if (n < 0)
+		n = 0;
+	buf[n] = '\0';
+	cur = strlen(promptbuf);
+	if (ev->state & ControlMask) {
+		if (ksym == XK_u || ksym == XK_U)
+			promptbuf[0] = '\0';
+		else if (ksym == XK_g || ksym == XK_bracketleft)
+			promptend(0);
+		else if (ksym == XK_m || ksym == XK_j)
+			promptend(1);
+		else
+			return;
+		drawbars();
+		return;
+	}
+	switch (ksym) {
+	case XK_Return:
+	case XK_KP_Enter:
+		promptend(1);
+		return;
+	case XK_Escape:
+		promptend(0);
+		return;
+	case XK_BackSpace:
+		/* drop one UTF-8 character */
+		while (cur > 0 && ((unsigned char)promptbuf[--cur] & 0xC0) == 0x80);
+		promptbuf[cur] = '\0';
+		break;
+	default:
+		if (!n || (unsigned char)buf[0] < 0x20 || buf[0] == 0x7f)
+			return;
+		len = strlen(buf);
+		if (cur + len > TASKNAMELEN - 1)
+			return;
+		memcpy(promptbuf + cur, buf, len + 1);
+		break;
+	}
+	drawbars();
 }
 
 void
