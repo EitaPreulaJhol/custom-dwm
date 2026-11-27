@@ -1981,7 +1981,11 @@ drawbar(Monitor *m)
 	for (c = m->clients; c; c = c->next) {
 		if (c->task != seltask)
 			continue;
-		occ |= c->tags;
+		/* A window on every tag (e.g. Chrome's screen-sharing indicator,
+		 * which asks for _NET_WM_DESKTOP 0xFFFFFFFF) says nothing about
+		 * which tags are in use: don't mark them all occupied. */
+		if ((c->tags & TAGMASK) != TAGMASK)
+			occ |= c->tags;
 		if (c->isurgent)
 			urg |= c->tags;
 	}
