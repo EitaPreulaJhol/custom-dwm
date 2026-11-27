@@ -1,0 +1,162 @@
+.TH DWM\-MSG 1 dwm\-VERSION
+.SH NAME
+dwm\-msg \- send commands to dwm and read its state and events
+.SH SYNOPSIS
+.B dwm\-msg
+.RB [ \-s
+.IR socket ]
+.I command
+.RI [ args ...]
+.SH DESCRIPTION
+.B dwm\-msg
+joins its arguments into one line, sends it to dwm's IPC socket and prints
+the reply, one line of JSON. It exits 1 when dwm answers
+.B {"success":false,...}
+or cannot be reached. After
+.BR subscribe ,
+it keeps printing the events, one JSON object per line, until dwm restarts or
+exits.
+.P
+The socket is
+.IR socket ,
+else
+.BR $DWM_SOCKET ,
+else the root window property
+.B _DWM_IPC_SOCKET
+on
+.BR $DISPLAY .
+Any program that writes a line to the socket and reads one back works too,
+e.g.
+.BR "echo get_tasks | socat \- UNIX\-CONNECT:$DWM_SOCKET" .
+.P
+Several commands can be sent on one line, separated by ';'. Commands answer
+.B {"success":true}
+or
+.BR {"success":false,"error":"..."} ;
+queries answer their data.
+.SH QUERIES
+.TP
+.B get_tree
+the tree of the workspace shown on each monitor: containers with
+.BR layout " (splith, splitv, stacked, tabbed), " fact " and " nodes ,
+windows as in
+.BR get_windows .
+.TP
+.B get_tasks
+the tasks:
+.BR num ", " name ", " focused ", " urgent ", " windows .
+.TP
+.B get_tags
+the tags of the focused monitor in the active task:
+.BR num ", " name ", " focused ", " occupied ", " urgent .
+.TP
+.B get_windows
+every managed window:
+.BR id ", " title ", " class ", " instance ", " task ", " tasknum ", " tag
+(0: every tag),
+.BR monitor ", " floating ", " fullscreen ", " minimized ", " urgent ", " focused .
+.TP
+.B get_focused
+the focused window, or null.
+.SH COMMANDS
+.TP
+.BR "focus left" | right | up | down
+directional focus, as Mod\-arrows.
+.TP
+.BR "focus next" | prev
+the next/previous window in the client list.
+.TP
+.B focus urgent
+the urgent window, on any task and tag (Mod\-u).
+.TP
+.B focus mode_toggle
+between the tiled and the floating windows.
+.TP
+.BI "focus id " window
+that window, showing its task and tag (a minimized one is restored).
+.TP
+.BR "move left" | right | up | down
+move the focused window, as Mod\-Shift\-arrows.
+.TP
+.BR "split h" | v
+as Mod\-h / Mod\-v.
+.TP
+.BR "layout splith" | splitv | stacked | stacking | tabbed
+the layout of the focused window's container (or of the workspace).
+.TP
+.B layout toggle split
+as Mod\-e.
+.TP
+.BI "view " tag
+show tag 1..10.
+.TP
+.BI "tag " tag
+move the focused window to tag 1..10.
+.TP
+.BI "task " task
+switch to a task, given by its number or its label.
+.TP
+.BI "movetotask " task
+move the focused window to that task.
+.TP
+.BI "newtask " label
+a new task after the active one, which becomes active.
+.TP
+.BI "renametask " label
+rename the active task.
+.TP
+.B deltask
+remove the active task; its windows go to the neighbouring one.
+.TP
+.BR "resize grow" | shrink " width" | height
+as one step of resize mode.
+.TP
+.BR floating ", " fullscreen ", " minimize ", " kill
+toggle floating / fullscreen, minimize or close the focused window.
+.TP
+.BR "mode resize" | move | default
+enter or leave a binding mode.
+.TP
+.B overview
+show or hide the task overview (Mod\-o).
+.TP
+.BI "exec " "command line"
+run it with /bin/sh; the rest of the line, ';' included, is the command.
+.TP
+.BR restart ", " exit
+restart dwm in place, or quit.
+.SH EVENTS
+.TP
+.BI "subscribe " event ...
+with
+.IR event " one of " focus ", " tag ", " task ", " window ", " tree ", " mode
+or
+.BR all .
+Each event is a line such as
+.BR {"event":"focus","window":{...}} :
+.B focus
+(the focused window, or null),
+.B tag
+(as
+.BR get_tags ),
+.B task
+(as
+.BR get_tasks ),
+.B window
+.RB ( change ": new, close or title, and the " window ),
+.B tree
+(as
+.BR get_tree ,
+after any change of the trees) and
+.B mode
+.RB ( mode ": resize, move or default)."
+A client that does not read its events fast enough is disconnected.
+.SH EXAMPLES
+.nf
+dwm\-msg get_tree
+dwm\-msg 'split v; exec st'
+dwm\-msg task work
+dwm\-msg subscribe focus tag
+.fi
+.SH SEE ALSO
+.BR dwm (1)

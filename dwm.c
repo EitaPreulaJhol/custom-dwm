@@ -394,6 +394,13 @@ static void ovclick(XButtonPressedEvent *ev);
 static void ovclose(void);
 static void ovdraw(void);
 static void ovkey(XEvent *e);
+/* IPC (ipc.c) */
+static int ipcfds(fd_set *fds, int maxfd);
+static void ipchandle(fd_set *fds);
+static void ipcsetup(void);
+static void ipccleanup(void);
+static void ipcstatechanged(int treechanged);
+static void ipcwindowevent(Client *c, const char *change);
 static Node *decochild(Node *n, int x, int y);
 static void decoshow(Monitor *m, Node *n, int x, int y, int w, int h);
 static Node *nodefocusleaf(Node *n);
@@ -888,6 +895,7 @@ cleanup(void)
 	size_t i;
 
 	cleaningup = 1; /* arrange() no longer lays out */
+	ipccleanup();
 	view(&a);
 	for (m = mons; m; m = m->next)
 		while (m->stack)
@@ -2624,6 +2632,7 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 	arrange(c->mon);
 	drawtitle(c, c == selmon->sel);
 	focus(NULL);
+	ipcwindowevent(c, "new");
 }
 
 void
@@ -3255,7 +3264,7 @@ savestate(void)
 	TaskView tv;
 	long *buf, order, desk;
 	size_t n, k, nmons = 0;
-	int task;
+	int task, treechanged;
 
 	if (!stateready || cleaningup || !selmon)
 		return;
@@ -3292,13 +3301,14 @@ savestate(void)
 		prevn = n;
 	} else
 		free(buf);
-	savetrees();
+	treechanged = savetrees();
 	desk = seltask * NTAGS + curtag(selmon);
 	if (desk != prevdesk) {
 		XChangeProperty(dpy, root, netatom[NetCurrentDesktop], XA_CARDINAL, 32,
 			PropModeReplace, (unsigned char *)&desk, 1);
 		prevdesk = desk;
 	}
+	ipcstatechanged(treechanged);
 }
 
 /* A tag's layout from a dwm before the container tree (dwm1/dwm2 state):
@@ -3810,13 +3820,16 @@ run(void)
 		FD_SET(xfd, &fds);
 		if (sigpipe[0] != -1)
 			FD_SET(sigpipe[0], &fds);
-		if (select(maxfd + 1, &fds, NULL, NULL, NULL) == -1) {
+		if (select(ipcfds(&fds, maxfd) + 1, &fds, NULL, NULL, NULL) == -1) {
 			if (errno == EINTR)
 				continue;
 			die("dwm: select:");
 		}
 		if (sigpipe[0] != -1 && FD_ISSET(sigpipe[0], &fds))
 			while (read(sigpipe[0], buf, sizeof buf) > 0);
+		/* commands may queue X events: the loop reads them before the
+		 * next select() */
+		ipchandle(&fds);
 	}
 }
 
@@ -3987,6 +4000,7 @@ setmode(const Arg *arg)
 		grabmodekeys(0);
 	wmmode = newmode;
 	drawbars();
+	savestate(); /* the mode event */
 }
 
 /* While a mode is active, bare arrows/Return/Escape are passive grabs on the
@@ -4073,6 +4087,7 @@ modekey(XEvent *e, KeySym keysym)
 		wmmode = ModeNormal;
 		grabmodekeys(0);
 		drawbars();
+		savestate();
 		return 1;
 	}
 	if (!c)
@@ -4269,6 +4284,7 @@ setup(void)
 	XChangeWindowAttributes(dpy, root, CWEventMask|CWCursor, &wa);
 	XSelectInput(dpy, root, wa.event_mask);
 	grabkeys();
+	ipcsetup();
 	focus(NULL);
 }
 
@@ -5412,6 +5428,8 @@ unmanage(Client *c, int destroyed)
 	Monitor *m = c->mon;
 	Window frame = c->frame;
 
+	if (!cleaningup)
+		ipcwindowevent(c, "close");
 	treeforget(c);
 	detach(c);
 	detachstack(c);
@@ -5809,8 +5827,10 @@ updatetitle(Client *c)
 	if (c->name[0] == '\0') /* hack to mark broken clients */
 		strcpy(c->name, broken);
 	c->taskcap = -1;
-	if (c->title)
+	if (c->title) {
 		drawclienttitles(c);
+		ipcwindowevent(c, "title");
+	}
 }
 
 void
@@ -6636,6 +6656,8 @@ ovclick(XButtonPressedEvent *ev)
 		return;
 	ovgo(t, i);
 }
+
+#include "ipc.c"
 
 int
 main(int argc, char *argv[])
