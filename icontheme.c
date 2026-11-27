@@ -4,8 +4,9 @@
  * freedesktop icon theme spec. The icon name comes from the window class and
  * instance, directly or through the Icon= key of a matching .desktop file.
  * The current GTK icon theme (gtk-3.0 settings.ini) and the themes it
- * inherits are searched, then hicolor, then /usr/share/pixmaps. Only PNG
- * files are read (libpng); scalable SVG-only icons are not found.
+ * inherits are searched, then hicolor, then /usr/share/pixmaps. In each
+ * theme a PNG (libpng) is preferred; otherwise an SVG (scalable or sized
+ * directory) is rendered with nanosvg at the icon size.
  */
 #ifdef ICONTHEME
 #include <ctype.h>
@@ -16,8 +17,19 @@
 
 #include <png.h>
 
+/* bundled third-party code: its C11 anonymous unions are fine */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wpedantic"
+#define NANOSVG_IMPLEMENTATION
+#define NANOSVGRAST_IMPLEMENTATION
+#include "nanosvg/nanosvg.h"
+#include "nanosvg/nanosvgrast.h"
+#pragma GCC diagnostic pop
+
 #include "icontheme.h"
 #include "util.h"
+
+#define SVGSIZE    16  /* rendered at the size the bar and titles show */
 
 #define MAXTHEMES  8
 #define MAXBASES   12
@@ -180,29 +192,104 @@ loadpng(const char *path, int *w, int *h)
 	return argb;
 }
 
+/* Render an SVG into a SVGSIZE square (aspect kept, centered) as
+ * 0xAARRGGBB longs. */
+static unsigned long *
+loadsvg(const char *path, int *w, int *h)
+{
+	NSVGimage *img;
+	NSVGrasterizer *rast;
+	unsigned char *buf;
+	unsigned long *argb = NULL;
+	float scale, iw, ih;
+	int i, n = SVGSIZE * SVGSIZE;
+
+	if (!(img = nsvgParseFromFile(path, "px", 96.0f)))
+		return NULL;
+	iw = img->width;
+	ih = img->height;
+	if (iw <= 0 || ih <= 0 || !(rast = nsvgCreateRasterizer())) {
+		nsvgDelete(img);
+		return NULL;
+	}
+	scale = SVGSIZE / (iw > ih ? iw : ih);
+	buf = ecalloc(n, 4);
+	nsvgRasterize(rast, img, (SVGSIZE - iw * scale) / 2, (SVGSIZE - ih * scale) / 2,
+		scale, buf, SVGSIZE, SVGSIZE, SVGSIZE * 4);
+	nsvgDeleteRasterizer(rast);
+	nsvgDelete(img);
+	for (i = 0; i < n && !buf[i * 4 + 3]; i++);
+	if (i < n) { /* not fully transparent (unsupported content) */
+		argb = ecalloc(n, sizeof *argb);
+		for (i = 0; i < n; i++)
+			argb[i] = ((unsigned long)buf[i * 4 + 3] << 24)
+				| ((unsigned long)buf[i * 4] << 16)
+				| ((unsigned long)buf[i * 4 + 1] << 8)
+				| buf[i * 4 + 2];
+		*w = *h = SVGSIZE;
+	}
+	free(buf);
+	return argb;
+}
+
+static unsigned long *
+loadfile(const char *path, int svg, int *w, int *h)
+{
+	if (access(path, R_OK))
+		return NULL;
+	return svg ? loadsvg(path, w, h) : loadpng(path, w, h);
+}
+
 static unsigned long *
 findicon(const char *name, int *w, int *h)
 {
 	char path[1536];
+	const char *ext;
 	unsigned long *p;
 	unsigned int b, t, s, k;
 
-	if (!name || !*name || strchr(name, '/'))
-		return name && name[0] == '/' && strstr(name, ".png")
-			? loadpng(name, w, h) : NULL;
-	for (t = 0; t < (unsigned int)nthemes; t++)
+	if (!name || !*name || strchr(name, '/')) {
+		if (!name || name[0] != '/' || !(ext = strrchr(name, '.')))
+			return NULL;
+		if (!strcmp(ext, ".png"))
+			return loadfile(name, 0, w, h);
+		if (!strcmp(ext, ".svg"))
+			return loadfile(name, 1, w, h);
+		return NULL;
+	}
+	for (t = 0; t < (unsigned int)nthemes; t++) {
 		for (s = 0; s < LENGTH(sizes); s++)
 			for (b = 0; b < (unsigned int)nbases; b++)
 				for (k = 0; k < LENGTH(categories); k++) {
 					snprintf(path, sizeof path, "%s/icons/%s/%dx%d/%s/%s.png",
 						bases[b], themes[t], sizes[s], sizes[s],
 						categories[k], name);
-					if (!access(path, R_OK) && (p = loadpng(path, w, h)))
+					if ((p = loadfile(path, 0, w, h)))
 						return p;
 				}
+		/* SVG-only themes (Papirus, Adwaita, ...): scalable first,
+		 * then the sized directories that hold SVGs */
+		for (b = 0; b < (unsigned int)nbases; b++)
+			for (k = 0; k < LENGTH(categories); k++) {
+				snprintf(path, sizeof path, "%s/icons/%s/scalable/%s/%s.svg",
+					bases[b], themes[t], categories[k], name);
+				if ((p = loadfile(path, 1, w, h)))
+					return p;
+				for (s = 0; s < LENGTH(sizes); s++) {
+					snprintf(path, sizeof path, "%s/icons/%s/%dx%d/%s/%s.svg",
+						bases[b], themes[t], sizes[s], sizes[s],
+						categories[k], name);
+					if ((p = loadfile(path, 1, w, h)))
+						return p;
+				}
+			}
+	}
 	for (b = 0; b < (unsigned int)nbases; b++) {
 		snprintf(path, sizeof path, "%s/pixmaps/%s.png", bases[b], name);
-		if (!access(path, R_OK) && (p = loadpng(path, w, h)))
+		if ((p = loadfile(path, 0, w, h)))
+			return p;
+		snprintf(path, sizeof path, "%s/pixmaps/%s.svg", bases[b], name);
+		if ((p = loadfile(path, 1, w, h)))
 			return p;
 	}
 	return NULL;

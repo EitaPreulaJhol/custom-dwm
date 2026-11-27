@@ -22,9 +22,9 @@ FREETYPEINC = /usr/include/freetype2
 #FREETYPEINC = ${X11INC}/freetype2
 #MANPREFIX = ${PREFIX}/man
 
-# Icon theme lookup for windows without _NET_WM_ICON (libpng), comment to
-# build without it
-ICONTHEMELIBS  = -lpng
+# Icon theme lookup for windows without _NET_WM_ICON (libpng for PNG icons,
+# the bundled nanosvg for SVG ones), comment to build without it
+ICONTHEMELIBS  = -lpng -lm
 ICONTHEMEFLAGS = -DICONTHEME
 
 # includes and libs

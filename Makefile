@@ -16,7 +16,7 @@ all: dwm
 
 ${OBJ}: config.mk
 dwm.o: config.h drw.h icontheme.h util.h
-icontheme.o: icontheme.h util.h
+icontheme.o: icontheme.h util.h nanosvg/nanosvg.h nanosvg/nanosvgrast.h
 drw.o: drw.h util.h
 util.o: util.h
 
@@ -29,7 +29,7 @@ clean:
 dist: clean
 	mkdir -p dwm-${VERSION}
 	cp -R LICENSE Makefile README.md config.h config.mk\
-		dwm.1 drw.h icontheme.h util.h ${SRC} transient.c patches integration \
+		dwm.1 drw.h icontheme.h util.h ${SRC} transient.c patches integration nanosvg \
 		dwm-${VERSION}
 	tar -cf dwm-${VERSION}.tar dwm-${VERSION}
 	gzip dwm-${VERSION}.tar
