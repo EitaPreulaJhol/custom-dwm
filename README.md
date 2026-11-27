@@ -5,14 +5,25 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
 ## Features
 
 - **Frames and title bars** - 18px title bar with a real 16px
-  `_NET_WM_ICON`, or the icon theme's PNG icon for the window class (no empty
-  slot when there is none), i3-style border and colors. Drag the title to
-  move, Win+Space toggles floating, Button3 resizes (on borders). Windows
-  with client-side decorations (`_MOTIF_WM_HINTS`) get no title bar, except
-  as tabs; ARGB windows get a 32-bit frame, so transparency survives.
-- **Tabbed mode** - the title bar becomes a shared, clickable tab strip;
-  `Mod+Left/Right` cycles tabs. Only the active tab is mapped, and remaps
-  repaint the client so old content cannot linger.
+  `_NET_WM_ICON`, or the icon theme's icon for the window class (PNG, or SVG
+  rendered with the bundled nanosvg; no empty slot when there is none),
+  i3-style border and colors. Drag the title to move, Win+Space toggles
+  floating, Button3 resizes (on borders). Windows with client-side
+  decorations (`_MOTIF_WM_HINTS`) get no title bar; ARGB windows get a 32-bit
+  frame, so transparency survives.
+- **i3 container tree** - every workspace (task x tag) is an i3 tree of
+  containers. A new window opens after the focused one, in its container;
+  `Mod+h`/`Mod+v` (`split h`/`split v`) give the focused window a container
+  of its own (or turn its container when it is alone in it), `Mod+e` toggles
+  the container between splith and splitv, `Mod+s`/`Mod+w` make it stacked or
+  tabbed. Containers nest freely: a tabbed container can hold a splitv one
+  and so on. Stacked and tabbed containers have a clickable title strip (one
+  row or one tab per child, `V[st firefox]` for a nested container) and only
+  show the selected child; their windows have no title bar of their own.
+  `Mod+arrows` focus and `Mod+Shift+arrows` move through the tree like i3
+  (move into the neighbouring container, out of the current one, or turn the
+  workspace when there is nothing that way); focus wraps at the edges. The
+  tree is kept across restarts.
 - **Bar and taskbar** - 10 tags with the orange active frame, occupied dot,
   clock, 16px tray; taskbar items show real icons, titles, and an orange frame
   on the focused window.
@@ -31,13 +42,29 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
   `Mod+Shift+n` (or `Button3` on the task) renames, `Mod+Shift+Delete`
   removes the active one and hands its windows to the neighbour. The labels
   are kept in `~/.dwm/tasks` (one per line); `deftasks` in `config.h` is only
-  the initial list.
-- **Layouts and gaps** - splith, splitv, monocle, tabbed, and floating, with
-  uniform 10px inner and outer gaps. Layouts, the master size and the number
-  of master windows are remembered per tag, so switching modes on one
-  workspace does not change the others (when several tags are viewed
-  together, the first one provides them). Each tiled window has its own share
-  of its column/row, changed in resize mode like i3's `resize grow height`.
+  the initial list. A task with an urgent window has its label marked;
+  `Mod+u` goes to the urgent window, whatever its task and tag (i3's
+  `[urgent=latest] focus`).
+- **Overview** - `Mod+o` shows every task in a panel, one row per task and
+  one cell per tag with the icons of its windows (the current workspace
+  framed, urgent cells marked). The arrows (or `j k l ;`) move, `Return` or a
+  click goes there, `1..0` go to that tag of the selected task, `Escape` or
+  `Mod+o` closes it.
+- **IPC** - a Unix socket (`$XDG_RUNTIME_DIR/dwm-<display>.sock`, also in
+  `$DWM_SOCKET` and the root property `_DWM_IPC_SOCKET`) takes one command
+  per line and answers with one line of JSON: queries (`get_tree`,
+  `get_tasks`, `get_tags`, `get_windows`, `get_focused`), commands
+  (`focus left`, `move up`, `split v`, `layout tabbed`, `view 3`,
+  `task work`, `newtask name`, `exec cmd`, `resize grow width`, ...) and
+  `subscribe focus tag task window tree mode` for a stream of events.
+  `dwm-msg` is the client (`dwm-msg get_tree`, `dwm-msg subscribe focus`);
+  see `dwm-msg(1)`.
+- **Gaps and sizes** - uniform 10px inner and outer gaps. Each container
+  child has its own share of its split, changed in resize mode like i3's
+  `resize grow width/height`. Each workspace has its own tree, so changing
+  one does not change the others (when several tags are viewed together,
+  the first one's tree lays them out). `defaultlayout` in `config.h` is the
+  layout of empty workspaces (i3's `default_orientation`).
 - **Floating windows** - any window that does not tile (floating rules,
   dialog/utility/splash/toolbar/notification types, transients, fixed-size
   prompts, the floating layout) always opens
@@ -63,13 +90,17 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
   place and keeps every window's tags, monitor, floating state and size, the
   window order, the tasks, each tag's layout and factors, the viewed tags and
 the focus.
-  The state is kept in window properties all the time, so even a crashed dwm
-  is restored. SIGTERM quits cleanly.
+  The state is kept in window properties all the time (the trees in
+  `_DWM_TREE` on the root window), so even a crashed dwm is restored.
+  Restarting from a dwm before the tree keeps each tag's layout as the
+  layout of its workspace. SIGTERM quits cleanly.
 - **Session** - `integration/` has autostart, the clock, in-place restart, the
   exit confirmation, and the xsession selector.
 
-Known gaps: no nested i3 tree (splith/splitv are separate layouts); the icon
-theme lookup reads PNG icons only (SVG-only icons are not shown).
+Known gaps: the focus is always on a window (no i3 `focus parent` to act on
+a whole container); resizing tiled windows with the mouse floats them
+instead of moving the border between them; compressed `.svgz` icons and SVG
+features nanosvg does not render (text, filters) are not shown.
 
 ## Build and install
 
@@ -78,15 +109,16 @@ make
 ```
 
 Dependencies: `libx11-dev`, `libxext-dev`, `libxft-dev`,
-`libxinerama-dev`, `libfontconfig1-dev`, `libpng-dev` (icon theme lookup;
-comment `ICONTHEME*` in `config.mk` to build without it).
+`libxinerama-dev`, `libfontconfig1-dev`, `libpng-dev` (icon theme lookup,
+with the bundled `nanosvg/` for SVG icons; comment `ICONTHEME*` in
+`config.mk` to build without it).
 
 ```sh
 make install
 ```
 
-`make install` is the per-user install used by this setup. It installs `dwm`
-and the man page under `~/.local` (`PREFIX` defaults to `~/.local`), then
+`make install` is the per-user install used by this setup. It installs `dwm`,
+`dwm-msg` and their man pages under `~/.local` (`PREFIX` defaults to `~/.local`), then
 refreshes the session files in `~/.dwm`, the helper symlinks and the xsession
 entry via `integration/install.sh`. The binary is replaced atomically, so the
 current dwm and X session are not interrupted; the new binary is used on the
@@ -97,10 +129,10 @@ since the outline is now part of dwm.
 | Target | Purpose |
 |---|---|
 | `make install` | per-user binary, man page and session files |
-| `make install-wm` | per-user binary and man page only |
+| `make install-wm` | per-user binaries and man pages only |
 | `make install-session` | per-user session files only |
 | `make install-local` | alias for `make install-wm` |
-| `make uninstall` | remove the installed binary and man page |
+| `make uninstall` | remove the installed binaries and man pages |
 
 For a system-wide binary:
 
@@ -143,10 +175,12 @@ keeps crashing) and logs its errors to `~/.dwm/dwm.log`. `dwm-restart` and
 | `Mod+f` / `Mod+d` | pcmanfm / launcher |
 | `Mod+Shift+s` | flameshot |
 | `Mod+q` | close the focused window |
-| `Mod+arrows` | directional focus; Left/Right cycles tabs in tabbed/stacking |
-| `Mod+Shift+arrows` | move the window (tiled: reorder; floating: 10px) |
-| `Mod+h` / `Mod+v` | splith / splitv |
-| `Mod+s` / `Mod+w` / `Mod+e` | stacking / tabbed / toggle split |
+| `Mod+arrows` | focus left/down/up/right through the tree (tabs are left/right, stacked rows up/down) |
+| `Mod+Shift+arrows` | move the window (tiled: through the tree; floating: 10px) |
+| `Mod+h` / `Mod+v` | split h / split v |
+| `Mod+s` / `Mod+w` / `Mod+e` | container stacked / tabbed / toggle split |
+| `Mod+u` | focus the urgent window (any task or tag) |
+| `Mod+o` | task overview |
 | `Mod+space` / `Mod+Shift+space` | toggle floating / focus the other |
 | `Mod+Shift+f` | fullscreen |
 | `Mod+1..0` / `Mod+Shift+1..0` | view / move to tags 1–10 |
@@ -159,7 +193,7 @@ keeps crashing) and logs its errors to `~/.dwm/dwm.log`. `dwm-restart` and
 | `Mod+Shift+c` / `Mod+Shift+r` | restart dwm in place (state kept) |
 | `Mod+Shift+e` | exit with confirmation |
 | `Mod+b` / `Mod+j` / `Mod+k` | bar / focus stack |
-| click a tab | focus that client |
+| click a tab or stacked row | focus that window (or that container's focused one) |
 | title `Button1` | focus; drag a floating window |
 | `Mod`+title `Button1` | drag a tiled window onto another to swap them, or move a floating one |
 | title `Button2` | toggle floating |
@@ -167,10 +201,9 @@ keeps crashing) and logs its errors to `~/.dwm/dwm.log`. `dwm-restart` and
 | border `Button3` / `Mod`+border `Button1/3` | resize / move or resize |
 
 In resize mode use the arrows or `j/k/l/;` (shrink/grow width and height, as
-in i3: on a tiled window one axis moves the master/stack split, the other one
-changes the window's share of its column or row; `Shift+Up/Down` change the
-number of master windows); in move mode use the arrows (Shift = 50px for
-floating). `Return`, `Escape`, `Mod+r` or `Mod+m` leaves.
+in i3: a tiled window's branch gets 2 percentage points more or less of the
+nearest container split that way); in move mode use the arrows (tiled
+windows move through the tree; Shift = 50px for floating). `Return`, `Escape`, `Mod+r` or `Mod+m` leaves.
 The mode keys are grabbed, so the focused client does not swallow them.
 
 Bar clicks: tasks switch (`Button3` renames, `Mod`+click moves the window
@@ -197,20 +230,27 @@ focused client (tag switches, tabs, closing, short-lived windows, clicks,
 fullscreen-at-map, `_NET_ACTIVE_WINDOW`) and exits non-zero on failure;
 `test/icons.sh`, `test/modes.sh`, `test/fixed.sh`, and
 `test/taglayouts.sh` cover icons, binding modes, fixed-size prompts, and
-per-tag layouts. `test/restart.sh` checks that a restart (key and SIGHUP)
+per-workspace layouts. `test/restart.sh` checks that a restart (key and SIGHUP)
 keeps the state and that SIGTERM hands the windows back; `test/tasks.sh` covers tasks (bar prompt, switching, per-task tags and
 layouts, moving windows, EWMH desktops, restart, removal and
 `~/.dwm/tasks` at login); `test/minimize.sh` covers minimizing from the
 taskbar (tiled, floating and tabbed windows, client and pager requests,
 restart); `test/ewmh.sh`
 covers the EWMH/Motif support, ARGB frames, drag-to-swap,
-40 tabs and the icon theme fallback.
+40 tabs and the icon theme fallback (PNG and SVG); `test/tree.sh` covers the
+container tree (split, stacked/tabbed strips, toggle split, focus and move
+through the tree, resize, restart, empty containers); `test/ipc.sh` covers
+the IPC socket and `dwm-msg`, the urgent task label with `Mod+u`, and the
+overview.
 
 ## Files
 
 | Path | Purpose |
 |---|---|
 | `config.h` | the deployed configuration |
+| `ipc.c` | the IPC socket (included by `dwm.c`) |
+| `dwm-msg.c` | the IPC client |
+| `nanosvg/` | bundled SVG parser and rasterizer (zlib license) |
 | `patches/` | upstream patches applied verbatim (`systray`) |
 | `integration/` | session wrapper, autostart, clock, restart/exit |
 | `test/` | Docker/Xvfb harness and helpers |

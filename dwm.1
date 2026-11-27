@@ -7,16 +7,16 @@ dwm \- dynamic window manager with the look and controls of i3
 .SH DESCRIPTION
 dwm is a dynamic window manager for X. This build keeps dwm's core and adds
 the look and key bindings of an i3 session: per-window title bars, i3 colors,
-tabbed and stacking layouts, binding modes for resizing and moving, a taskbar
-and a system tray.
+i3's container tree with split, stacked and tabbed containers, binding modes
+for resizing and moving, a taskbar, a system tray and an IPC socket.
 .P
 Every client lives in a frame with an 18px title bar that shows its icon (its
 .BR _NET_WM_ICON ,
-or else the icon theme's icon for its class) and its title. The focused frame
+or else the icon theme's PNG or SVG icon for its class) and its title. The focused frame
 gets a 2px orange outline, drawn by dwm itself on an input-transparent
 overlay. Windows that draw their own decorations (no decorations in
 .BR _MOTIF_WM_HINTS )
-get no title bar, except as tiled windows of the tabbed layout. Windows with
+get no title bar. Windows with
 a 32-bit (ARGB) visual get a frame of the same depth, so their transparency
 works with a compositor.
 .P
@@ -27,25 +27,34 @@ window of every monitor. The tasks are shown left of the tags; the active one
 is the same on every monitor. Tasks are created, renamed and removed at
 runtime and their labels are kept in
 .BR ~/.dwm/tasks .
-New windows open in the active task.
+New windows open in the active task. A task with an urgent window has its
+label marked.
+.SS Container tree
+As in i3, the tiled windows of every workspace (a tag of a task on a
+monitor) form a tree of containers. A container is laid out as
+.TP
+.B splith
+its children side by side (the default,
+.B defaultlayout
+in config.h),
+.TP
+.B splitv
+its children one above the other,
+.TP
+.B stacked
+one title row per child above the selected child,
+.TP
+.B tabbed
+one tab per child above the selected child.
 .P
-The layouts are:
-.TP
-.B splith ([]=)
-master column on the left, stack on the right (the i3 default).
-.TP
-.B splitv ([v])
-master row on top, stack below.
-.TP
-.B stacking ([S])
-every tiled window fills the work area, overlapping.
-.TP
-.B tabbed ([T])
-the title bar of the visible window becomes a shared tab strip with one tab
-per tiled window; only the active tab is mapped.
-.TP
-.B floating (><>)
-windows are placed and sized freely.
+A new window opens right after the focused one, in its container. Containers
+nest: a tabbed container may hold a splitv container that holds windows, and
+so on. The title strip of a stacked or tabbed container shows each child's
+icon and title (a nested container shows as its layout and the classes of its
+windows, such as
+.BR V[st\ firefox] );
+the windows in it have no title bar of their own and only the selected child
+is shown. Empty containers go away. The tree is kept across restarts.
 .P
 Tiled windows are separated by 10px gaps, with the same gap at the monitor
 edges. Windows that do not tile (floating rules, dialog, utility, splash,
@@ -56,9 +65,8 @@ their monitor, at most 1310x710 (i3's
 .P
 Windows are grouped by ten tags, the i3 workspaces 1 to 10, published as the
 EWMH desktops (pagers and window switchers can read and change them). Each
-tag remembers its own layout, master area size and number of master windows,
-so changing them on one tag does not affect the others; when several tags are
-viewed together, the first one provides them.
+tag has its own tree, so changing one does not affect the others; when
+several tags are viewed together, the first one's tree lays them out.
 .P
 The bar shows the tags (the selected one framed in orange, occupied ones
 followed by a dot), the active binding mode, a taskbar with the windows of
@@ -140,27 +148,46 @@ Start
 Close the focused window.
 .TP
 .B Mod\-Left / Down / Up / Right
-Focus the nearest window in that direction. In the tabbed and stacking
-layouts Left/Right cycle through the tabs/windows instead, wrapping around.
+Focus in that direction, like i3: from the focused window up to the nearest
+container laid out that way (tabs count as left/right, stacked rows as
+up/down) that has a window on that side, then down to that side's last
+focused window. At the edge the focus wraps around. A floating window gives
+the focus to the nearest floating window that way.
 .TP
 .B Mod\-Shift\-Left / Down / Up / Right
-Move the focused window: a tiled window swaps places with its neighbour in
-the tiling order, a floating window moves by 10px.
+Move the focused window. A tiled window trades places with its neighbour in
+a container laid out that way, enters a neighbouring container, or leaves its
+container for the nearest one laid out that way; with none, the workspace is
+split that way. A floating window moves by 10px.
 .TP
-.B Mod\-h
-Set the splith layout.
-.TP
-.B Mod\-v
-Set the splitv layout.
+.B Mod\-h, Mod\-v
+i3's
+.BR "split h" " and " "split v" :
+the next window opens right of / below the focused one. The focused window
+gets a container of its own, or, when it is alone in a split container, that
+container changes direction.
 .TP
 .B Mod\-e
-Toggle between splith and splitv.
+.BR "layout toggle split" :
+the focused window's container switches between splith and splitv; a stacked
+or tabbed one goes back to the split it had.
 .TP
 .B Mod\-s
-Set the stacking layout.
+Make the focused window's container stacked.
 .TP
 .B Mod\-w
-Set the tabbed layout.
+Make the focused window's container tabbed. With nothing focused, these
+apply to the workspace, for the windows opened next.
+.TP
+.B Mod\-u
+Focus the urgent window, on whatever task and tag it is (i3's
+.BR "[urgent=latest] focus" ).
+.TP
+.B Mod\-o
+Show the task overview: one row per task and one cell per tag with the icons
+of its windows; the current workspace is framed, urgent cells are marked. The
+arrows (or j k l ;) move, Return or a click goes to the selected cell, 1..0
+go to that tag of the selected task, Escape or Mod\-o close it.
 .TP
 .B Mod\-space
 Toggle the focused window between tiled and floating. A window that becomes
@@ -247,8 +274,8 @@ Send the focused window to the previous/next monitor, if any.
 .B Mod\-Shift\-r, Mod\-Shift\-c
 Restart dwm in place: dwm re-executes itself (picking up a newly installed
 binary). Windows and the session helpers are kept, and so are each window's
-tags, monitor, floating state and size factor, the window order, every tag's
-layout and factors, the viewed tags and the focus.
+tags, monitor and floating state, the window order, every workspace's tree,
+the viewed tags and the focus.
 .B dwm-restart
 does the same from a shell.
 .TP
@@ -268,21 +295,19 @@ go back to normal mode.
 .TP
 .B Resize mode
 Left/j and Right/; make the window narrower/wider, Up/l and Down/k make it
-shorter/taller, like i3's resize mode. A floating window changes by 10px. For
-a tiled window the direction that crosses the master/stack split moves the
-split, and the other one changes the window's share of its column (splith)
-or row (splitv), 2 percentage points per step. Shift\-Up/Shift\-Down
-remove/add a master window.
+shorter/taller, like i3's resize mode. A floating window changes by 10px. A
+tiled window's branch gets 2 percentage points more or less of the nearest
+splith (width) or splitv (height) container it shares with other windows.
 .TP
 .B Move mode
-The arrows move a floating window by 10px (50px with Shift) or swap a tiled
-window with its neighbour.
+The arrows move a floating window by 10px (50px with Shift) or move a tiled
+window through the tree like Mod\-Shift\-arrows.
 .SS Mouse commands
 Any click on a window focuses it.
 .TP
 .B Button1
-on the title bar of a floating window moves it while dragging; on a tab
-focuses that tab.
+on the title bar of a floating window moves it while dragging; on a tab or a
+stacked row focuses that child.
 .TP
 .B Button2
 on the title bar or the frame toggles between tiled and floating.
@@ -306,6 +331,19 @@ floating.
 Windows that draw their own title bar can also move and resize themselves
 through
 .BR _NET_WM_MOVERESIZE .
+.SH IPC
+dwm listens on a Unix socket,
+.BR $XDG_RUNTIME_DIR/dwm\-<display>.sock
+(or
+.BR /tmp/dwm\-<uid>\-<display>.sock ),
+whose path is also in the root window property
+.B _DWM_IPC_SOCKET
+and in
+.B $DWM_SOCKET
+for the programs dwm starts. Each line sent is a command (several separated
+by ';') and each reply is one line of JSON. See
+.BR dwm\-msg (1)
+for the commands and events.
 .SH SIGNALS
 .TP
 .B SIGHUP
@@ -347,12 +385,16 @@ dwm is customized by editing config.h and recompiling the source code.
 installs the binary and this page under ~/.local and the session files under
 ~/.dwm; a running dwm picks up the new binary on the next in-place restart.
 .SH SEE ALSO
+.BR dwm\-msg (1),
 .BR st (1),
 .BR xsetroot (1),
 .BR i3 (1)
 .SH ISSUES
-The icon theme lookup reads only PNG icons (the current GTK icon theme, the
-themes it inherits, hicolor and pixmaps); SVG-only icons are not shown.
+The focus is always on a window: there is no i3
+.B focus parent
+to act on a whole container. Resizing a tiled window with the mouse makes it
+floating. SVG icons are rendered with nanosvg, which has no text or filters;
+compressed .svgz icons are not read.
 .SH BUGS
 This is a personal build; report problems to its maintainer, not to
 suckless.org.
