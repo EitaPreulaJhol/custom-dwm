@@ -66,7 +66,10 @@ the viewed tags (the focused one framed in orange), the status text read from
 the root window name, and the system tray.
 .SS Focus
 Focus follows clicks, not the mouse: clicking a window, its title, its tab or
-its taskbar entry focuses it. When the focused window goes away, or when the
+its taskbar entry focuses it.
+A minimized window (dimmed in the taskbar) is hidden and left out of the
+layout until its entry is clicked again or it is activated; it then comes
+back exactly where it was, with the focus. When the focused window goes away, or when the
 view changes to other tags, the keyboard goes to the most recently focused
 window that is still visible.
 .P
@@ -108,8 +111,9 @@ on a task label renames that task.
 on a task label moves the focused window to that task.
 .TP
 .B Button1
-on a tag label views that tag; on a taskbar entry focuses that window; on the
-status text opens the polybar calendar popup.
+on a tag label views that tag; on a taskbar entry focuses that window, or
+minimizes it when it is already focused, or restores it when it is
+minimized; on the status text opens the polybar calendar popup.
 .TP
 .B Mod\-Button2
 on a taskbar entry swaps the focused window with the master (tiled layouts

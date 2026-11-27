@@ -56,8 +56,11 @@
 #define CLEANMASK(mask)         (mask & ~(numlockmask|LockMask) & (ShiftMask|ControlMask|Mod1Mask|Mod2Mask|Mod3Mask|Mod4Mask|Mod5Mask))
 #define INTERSECT(x,y,w,h,m)    (MAX(0, MIN((x)+(w),(m)->wx+(m)->ww) - MAX((x),(m)->wx)) \
                                * MAX(0, MIN((y)+(h),(m)->wy+(m)->wh) - MAX((y),(m)->wy)))
-#define ISVISIBLE(C)            ((cleaningup || (C)->task == seltask) \
+/* ONVIEW: on the viewed tags of the active task (listed in the taskbar);
+ * ISVISIBLE: also not minimized, i.e. shown, tiled and focusable */
+#define ONVIEW(C)               ((cleaningup || (C)->task == seltask) \
                                && ((C)->tags & (C)->mon->tagset[(C)->mon->seltags]))
+#define ISVISIBLE(C)            (ONVIEW(C) && (cleaningup || !(C)->minimized))
 #define MOUSEMASK               (BUTTONMASK|PointerMotionMask)
 #define WIDTH(X)                ((X)->w)
 #define HEIGHT(X)               ((X)->h)
@@ -80,7 +83,8 @@
 #define VIEWSTATE               4  /* per task: seltags, tagset[2], sel */
 #define TAGSTATE                5  /* sellt, lt[2], mfact, nmaster */
 #define CLIENTSTATE1            5  /* tags, mon, floating, cfact, order */
-#define CLIENTSTATE             6  /* ... plus task */
+#define CLIENTSTATE2            6  /* ... plus task */
+#define CLIENTSTATE             7  /* ... plus minimized */
 
 /* _NET_WM_MOVERESIZE directions */
 #define MOVERESIZE_SIZE_TOPLEFT      0
@@ -114,10 +118,11 @@ enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMDesktop, NetCurrentDesktop, NetNumberOfDesktops, NetDesktopNames,
        NetCloseWindow, NetWMMoveResize, NetFrameExtents, NetRequestFrameExtents,
        NetWMStateDemandsAttention, NetWMWindowTypeUtility, NetWMWindowTypeSplash,
-       NetWMWindowTypeToolbar, NetWMWindowTypeNotification, NetLast }; /* EWMH atoms */
+       NetWMWindowTypeToolbar, NetWMWindowTypeNotification, NetWMStateHidden,
+       NetLast }; /* EWMH atoms */
 enum { DwmClientState, DwmState, MotifWMHints, DwmLast }; /* non-EWMH atoms */
 enum { Manager, Xembed, XembedInfo, XLast }; /* Xembed atoms */
-enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMLast }; /* default atoms */
+enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMChangeState, WMLast }; /* default atoms */
 enum { ClkTaskCell, ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkBorder, ClkTitleBar, ClkTab, ClkRootWin, ClkLast }; /* clicks */
 enum { ModeNormal, ModeResize, ModeMove }; /* binding modes */
 enum { DirLeft, DirDown, DirUp, DirRight }; /* directions */
@@ -155,6 +160,7 @@ struct Client {
 	int statevalid;
 	unsigned int tags;
 	int task; /* index in tasknames */
+	int minimized; /* hidden from its tags until restored (taskbar) */
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
 	int mapped; /* frame currently mapped by showhide() */
 	int notitle; /* _MOTIF_WM_HINTS: no decorations (client-side ones) */
@@ -346,6 +352,7 @@ static int taskwidth(Client *c, int cap);
 static int textwidth(const char *s);
 static void setfocus(Client *c);
 static void setfullscreen(Client *c, int fullscreen);
+static void setminimized(Client *c, int minimized);
 static void setlayout(const Arg *arg);
 static void setmfact(const Arg *arg);
 static void setmode(const Arg *arg);
@@ -554,9 +561,11 @@ updatemotifhints(Client *c)
 static void
 updatenetstate(Client *c)
 {
-	Atom st[2];
+	Atom st[3];
 	int n = 0;
 
+	if (c->minimized)
+		st[n++] = netatom[NetWMStateHidden];
 	if (c->isfullscreen)
 		st[n++] = netatom[NetWMFullscreen];
 	if (c->isurgent)
@@ -1028,6 +1037,9 @@ clientmessage(XEvent *e)
 	if (cme->message_type == netatom[NetWMState]) {
 		Atom a1 = (Atom)cme->data.l[1], a2 = (Atom)cme->data.l[2];
 
+		if (a1 == netatom[NetWMStateHidden] || a2 == netatom[NetWMStateHidden])
+			setminimized(c, cme->data.l[0] == 1
+				|| (cme->data.l[0] == 2 && !c->minimized));
 		if (a1 == netatom[NetWMFullscreen] || a2 == netatom[NetWMFullscreen])
 			setfullscreen(c, (cme->data.l[0] == 1 /* _NET_WM_STATE_ADD    */
 				|| (cme->data.l[0] == 2 /* _NET_WM_STATE_TOGGLE */ && !c->isfullscreen)));
@@ -1047,11 +1059,17 @@ clientmessage(XEvent *e)
 		 * on a visible tag, mark any other one urgent. */
 		if (c == selmon->sel)
 			return;
-		if (ISVISIBLE(c)) {
+		if (ONVIEW(c) && c->minimized)
+			setminimized(c, 0);
+		else if (ISVISIBLE(c)) {
 			focus(c);
 			restack(c->mon);
 		} else if (!c->isurgent)
 			seturgent(c, 1);
+	} else if (cme->message_type == wmatom[WMChangeState]) {
+		/* ICCCM iconify request (a client's own minimize button) */
+		if (cme->data.l[0] == IconicState)
+			setminimized(c, 1);
 	}
 }
 
@@ -1815,7 +1833,8 @@ drawtask(Monitor *m, Client *c, int *x, int cap)
 	int urgent = c->isurgent;
 	int w = taskwidth(c, cap);
 	int x0 = *x, tx;
-	int seltask = urgent ? SchemeTaskUrg : focused ? SchemeTaskSel : SchemeTask;
+	int seltask = urgent ? SchemeTaskUrg : focused ? SchemeTaskSel
+		: c->minimized ? SchemeTagEmpty : SchemeTask; /* minimized: dimmed */
 	const char *title = tasktitle(c, cap);
 
 	if (focused || urgent) {
@@ -1857,7 +1876,7 @@ drawtasks(Monitor *m, int x, int right)
 	ensuremoncap(m);
 	list = m->taskclients;
 	for (c = m->clients; c; c = c->next)
-		if (ISVISIBLE(c))
+		if (ONVIEW(c))
 			list[n++] = c;
 	if (!n)
 		return;
@@ -2155,10 +2174,52 @@ focustask(const Arg *arg)
 	if (!c)
 		return;
 	for (t = selmon->clients; t && t != c; t = t->next);
-	if (!t || !ISVISIBLE(c))
+	if (!t || !ONVIEW(c))
 		return;
-	focus(c);
-	restack(selmon);
+	/* like a Windows taskbar: the focused window minimizes, a minimized
+	 * one comes back, any other one gets the focus */
+	if (c->minimized)
+		setminimized(c, 0);
+	else if (c == selmon->sel)
+		setminimized(c, 1);
+	else {
+		focus(c);
+		restack(selmon);
+	}
+}
+
+/* Minimize: hide the window, the layout goes on without it. Restore: it
+ * comes back in its place in the window order (floating windows with
+ * their geometry, fullscreen ones still fullscreen) and gets the focus. */
+void
+setminimized(Client *c, int minimized)
+{
+	minimized = minimized ? 1 : 0;
+	if (c->minimized == minimized)
+		return;
+	c->minimized = minimized;
+	setclientstate(c, minimized ? IconicState : NormalState);
+	updatenetstate(c);
+	if (minimized) {
+		if (c->mon->tabsel == c)
+			c->mon->tabsel = NULL;
+		if (c->mon->sel == c && c->mon != selmon) {
+			Client *s;
+
+			for (s = c->mon->stack; s && !ISVISIBLE(s); s = s->snext);
+			c->mon->sel = s;
+		}
+		focus(NULL);
+		arrange(c->mon);
+	} else if (ISVISIBLE(c)) {
+		focus(c);
+		arrange(c->mon);
+		restack(c->mon);
+	} else {
+		arrange(c->mon);
+		drawbars();
+	}
+	savestate();
 }
 
 void
@@ -2519,6 +2580,7 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 		if (st[3] > 0)
 			c->cfact = st[3] / 1000.0;
 		c->task = st[5] >= 0 && st[5] < ntasks ? (int)st[5] : 0;
+		c->minimized = st[6] ? 1 : 0;
 	}
 	updatemotifhints(c);
 	updatesizehints(c);
@@ -2603,7 +2665,9 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 	attachstack(c);
 	XChangeProperty(dpy, root, netatom[NetClientList], XA_WINDOW, 32, PropModeAppend,
 		(unsigned char *) &(c->win), 1);
-	setclientstate(c, NormalState);
+	setclientstate(c, c->minimized ? IconicState : NormalState);
+	if (c->minimized)
+		updatenetstate(c);
 	if (c->mon == selmon)
 		unfocus(selmon->sel, 0);
 	c->mon->sel = c;
@@ -3254,6 +3318,7 @@ setclientprops(Client *c, long order)
 	st[3] = (long)(c->cfact * 1000 + 0.5);
 	st[4] = order;
 	st[5] = c->task;
+	st[6] = c->minimized;
 	if (c->statevalid && !memcmp(st, c->savedstate, sizeof st))
 		return;
 	memcpy(c->savedstate, st, sizeof st);
@@ -3276,10 +3341,11 @@ readclientstate(Window w, long *st)
 
 	if (XGetWindowProperty(dpy, w, dwmatom[DwmClientState], 0, CLIENTSTATE,
 		False, XA_CARDINAL, &type, &format, &n, &after, &p) == Success && p) {
-		/* CLIENTSTATE1: written before tasks existed, task 0 */
+		/* older dwm: CLIENTSTATE1 without task (0), CLIENTSTATE2
+		 * without minimized (0) */
 		if (type == XA_CARDINAL && format == 32
-		&& (n == CLIENTSTATE || n == CLIENTSTATE1)) {
-			st[CLIENTSTATE - 1] = 0;
+		&& (n == CLIENTSTATE || n == CLIENTSTATE2 || n == CLIENTSTATE1)) {
+			memset(st, 0, CLIENTSTATE * sizeof(long));
 			memcpy(st, p, n * sizeof(long));
 			ok = 1;
 		}
@@ -4300,6 +4366,7 @@ setup(void)
 	wmatom[WMDelete] = XInternAtom(dpy, "WM_DELETE_WINDOW", False);
 	wmatom[WMState] = XInternAtom(dpy, "WM_STATE", False);
 	wmatom[WMTakeFocus] = XInternAtom(dpy, "WM_TAKE_FOCUS", False);
+	wmatom[WMChangeState] = XInternAtom(dpy, "WM_CHANGE_STATE", False);
 	netatom[NetActiveWindow] = XInternAtom(dpy, "_NET_ACTIVE_WINDOW", False);
 	netatom[NetSupported] = XInternAtom(dpy, "_NET_SUPPORTED", False);
 	netatom[NetSystemTray] = XInternAtom(dpy, "_NET_SYSTEM_TRAY_S0", False);
@@ -4324,6 +4391,7 @@ setup(void)
 	netatom[NetFrameExtents] = XInternAtom(dpy, "_NET_FRAME_EXTENTS", False);
 	netatom[NetRequestFrameExtents] = XInternAtom(dpy, "_NET_REQUEST_FRAME_EXTENTS", False);
 	netatom[NetWMStateDemandsAttention] = XInternAtom(dpy, "_NET_WM_STATE_DEMANDS_ATTENTION", False);
+	netatom[NetWMStateHidden] = XInternAtom(dpy, "_NET_WM_STATE_HIDDEN", False);
 	netatom[NetWMWindowTypeUtility] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_UTILITY", False);
 	netatom[NetWMWindowTypeSplash] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_SPLASH", False);
 	netatom[NetWMWindowTypeToolbar] = XInternAtom(dpy, "_NET_WM_WINDOW_TYPE_TOOLBAR", False);

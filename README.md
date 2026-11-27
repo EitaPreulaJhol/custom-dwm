@@ -16,6 +16,14 @@ dwm 6.8 with the look and key bindings of my default i3 session (mostly for back
 - **Bar and taskbar** - 10 tags with the orange active frame, occupied dot,
   clock, 16px tray; taskbar items show real icons, titles, and an orange frame
   on the focused window.
+- **Minimize** - the taskbar works like Windows': a click on the focused
+  window's entry minimizes it (its entry is dimmed, the layout goes on
+  without it), a click on a minimized entry restores it exactly as it was
+  (same place in the order, floating geometry, tab, fullscreen) with the
+  focus, a click on any other entry focuses it. Minimized windows are
+  `Iconic` with `_NET_WM_STATE_HIDDEN`; a client's own minimize button
+  (`WM_CHANGE_STATE`) and `_NET_ACTIVE_WINDOW` work too, and the state
+  survives restarts.
 - **Tasks** - groups of workspaces shown left of the tags. Each task has its
   own tags 1–10 with their own windows, layouts and factors, and remembers
   the viewed tags and the focused window of every monitor; the active task is
@@ -165,8 +173,8 @@ floating). `Return`, `Escape`, `Mod+r` or `Mod+m` leaves.
 The mode keys are grabbed, so the focused client does not swallow them.
 
 Bar clicks: tasks switch (`Button3` renames, `Mod`+click moves the window
-there), tags switch, taskbar entries focus the
-window, the clock area opens the polybar calendar popup.
+there), tags switch, taskbar entries focus the window (the focused one is
+minimized, a minimized one restored), the clock area opens the polybar calendar popup.
 
 ## Tests
 
@@ -191,7 +199,9 @@ fullscreen-at-map, `_NET_ACTIVE_WINDOW`) and exits non-zero on failure;
 per-tag layouts. `test/restart.sh` checks that a restart (key and SIGHUP)
 keeps the state and that SIGTERM hands the windows back; `test/tasks.sh` covers tasks (bar prompt, switching, per-task tags and
 layouts, moving windows, EWMH desktops, restart, removal and
-`~/.dwm/tasks` at login); `test/ewmh.sh`
+`~/.dwm/tasks` at login); `test/minimize.sh` covers minimizing from the
+taskbar (tiled, floating and tabbed windows, client and pager requests,
+restart); `test/ewmh.sh`
 covers the EWMH/Motif support, ARGB frames, drag-to-swap, back-and-forth,
 40 tabs and the icon theme fallback.
 
