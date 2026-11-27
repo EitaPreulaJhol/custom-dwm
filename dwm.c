@@ -70,18 +70,20 @@
 #define MAXTASKS                12
 #define TASKNAMELEN             64
 #define TEXTW(X)                (drw_fontset_getwidth(drw, (X)) + lrpad)
-#define MFACT(M)                ((M)->mfacts[PT(curtag(M))])
-#define NMASTER(M)              ((M)->nmasters[PT(curtag(M))])
+#define TREE(M)                 ((M)->trees[PT(curtag(M))])
 
 /* restart state (see savestate()) */
 #define STATEMAGIC1             0x64776d31L /* "dwm1": before tasks */
-#define STATEMAGIC              0x64776d32L /* "dwm2" */
+#define STATEMAGIC2             0x64776d32L /* "dwm2": with per-tag layouts */
+#define STATEMAGIC              0x64776d33L /* "dwm3" */
+#define TREEMAGIC               0x64777431L /* "dwt1": _DWM_TREE */
+#define TREENODE                4  /* kind, children, fact, window or focused child */
 #define STATEHEAD1              4  /* magic, ntags, nmons, selmon */
 #define MONSTATE1               6  /* num, seltags, tagset[2], sel, showbar */
 #define STATEHEAD               7  /* magic, ntags, nmons, selmon, ntasks, seltask, prevtask */
 #define MONSTATE                2  /* num, showbar */
 #define VIEWSTATE               4  /* per task: seltags, tagset[2], sel */
-#define TAGSTATE                5  /* sellt, lt[2], mfact, nmaster */
+#define TAGSTATE                5  /* dwm1/dwm2 only: sellt, lt[2], mfact, nmaster */
 #define CLIENTSTATE1            5  /* tags, mon, floating, cfact, order */
 #define CLIENTSTATE2            6  /* ... plus task */
 #define CLIENTSTATE             7  /* ... plus minimized */
@@ -120,12 +122,13 @@ enum { NetSupported, NetWMName, NetWMState, NetWMCheck,
        NetWMStateDemandsAttention, NetWMWindowTypeUtility, NetWMWindowTypeSplash,
        NetWMWindowTypeToolbar, NetWMWindowTypeNotification, NetWMStateHidden,
        NetLast }; /* EWMH atoms */
-enum { DwmClientState, DwmState, MotifWMHints, DwmLast }; /* non-EWMH atoms */
+enum { DwmClientState, DwmState, DwmTree, MotifWMHints, DwmLast }; /* non-EWMH atoms */
 enum { Manager, Xembed, XembedInfo, XLast }; /* Xembed atoms */
 enum { WMProtocols, WMDelete, WMState, WMTakeFocus, WMChangeState, WMLast }; /* default atoms */
 enum { ClkTaskCell, ClkTagBar, ClkTaskBar, ClkStatusText, ClkClientWin, ClkBorder, ClkTitleBar, ClkTab, ClkRootWin, ClkLast }; /* clicks */
 enum { ModeNormal, ModeResize, ModeMove }; /* binding modes */
 enum { DirLeft, DirDown, DirUp, DirRight }; /* directions */
+enum { SplitH, SplitV, Stacked, Tabbed }; /* container layouts */
 enum { RLeft = 1, RRight = 2, RTop = 4, RBottom = 8 }; /* resize anchors */
 
 typedef union {
@@ -155,7 +158,6 @@ struct Client {
 	int natx, naty, natw, nath; /* geometry requested when mapped */
 	int basew, baseh, incw, inch, maxw, maxh, minw, minh, hintsvalid;
 	int bw, oldbw;
-	float cfact; /* share of its column/row in the tiling layouts */
 	long savedstate[CLIENTSTATE]; /* last _DWM_CLIENT_STATE written */
 	int statevalid;
 	unsigned int tags;
@@ -163,6 +165,8 @@ struct Client {
 	int minimized; /* hidden from its tags until restored (taskbar) */
 	int isfixed, isfloating, isurgent, neverfocus, oldstate, isfullscreen;
 	int mapped; /* frame currently mapped by showhide() */
+	int intab; /* tiled in a stacked/tabbed container: no own title bar */
+	int tabhidden; /* tiled behind another tab of such a container */
 	int notitle; /* _MOTIF_WM_HINTS: no decorations (client-side ones) */
 	int th; /* title bar height currently applied (0 = none) */
 	int titlemapped;
@@ -189,10 +193,26 @@ typedef struct {
 	const Arg arg;
 } Key;
 
-typedef struct {
-	const char *symbol;
-	void (*arrange)(Monitor *);
-} Layout;
+/* i3 container tree: one per workspace (monitor x task x tag). Containers
+ * split their area (SplitH/SplitV) or show one child below a strip of titles
+ * (Stacked/Tabbed); leaves hold the tiled clients. Floating clients are not
+ * in the tree. */
+typedef struct Node Node;
+struct Node {
+	Node *parent, *first, *next; /* children in order */
+	Node *focus;     /* child on the focus path (last focused) */
+	int leaf;
+	Client *c;       /* leaf: the client (NULL until bound after a restart) */
+	Window win;      /* leaf: the client window */
+	int layout;      /* container: SplitH, SplitV, Stacked or Tabbed */
+	int lastsplit;   /* split layout that "layout toggle split" goes back to */
+	float fact;      /* share of the parent's split */
+	int present;     /* holds a shown tiled client (treepresent()) */
+	int x, y, w, h;  /* area of the last layout */
+	Window deco;     /* title strip of a Stacked/Tabbed container */
+	int decomapped, decoh;
+	unsigned int decogen;
+};
 
 /* what a monitor shows inside one task, saved while another task is active */
 typedef struct {
@@ -202,15 +222,13 @@ typedef struct {
 } TaskView;
 
 struct Monitor {
-	char ltsymbol[16];
-	float *mfacts;         /* per task x tag (PT()) */
-	int *nmasters;         /* per task x tag */
+	Node **trees;          /* container tree per task x tag (PT()) */
+	unsigned int decogen;  /* layout pass, to unmap strips not shown */
 	int num;
 	int by;               /* bar geometry */
 	int mx, my, mw, mh;   /* screen size */
 	int wx, wy, ww, wh;   /* window area  */
 	unsigned int seltags;
-	unsigned int *sellt;   /* active layout slot per task x tag */
 	TaskView taskview[MAXTASKS]; /* per task; the active one lives in tagset/seltags/sel */
 	unsigned int tagset[2];
 	int showbar;
@@ -220,7 +238,6 @@ struct Monitor {
 	Client *stack;
 	Monitor *next;
 	Window barwin;
-	const Layout **lt;     /* two remembered layouts per task x tag: lt[PT(tag) * 2 + slot] */
 	/* bar hit-testing caches, filled by drawbar() */
 	int taskcellx[MAXTASKS + 1];
 	int tagx[33];
@@ -230,12 +247,6 @@ struct Monitor {
 	int taskn;
 	int *taskx;            /* listcap entries */
 	Client **taskclients;
-	/* tabbed layout state */
-	Client *tabsel;
-	Client **tabclients;   /* listcap entries */
-	int *tabx;
-	int *tabw;
-	int tabn;
 	int listcap;
 };
 
@@ -270,7 +281,6 @@ static void configure(Client *c);
 static void configurenotify(XEvent *e);
 static void configurerequest(XEvent *e);
 static Monitor *createmon(void);
-static const Layout *curlayout(Monitor *m);
 static unsigned int curtag(Monitor *m);
 static void destroynotify(XEvent *e);
 static void detach(Client *c);
@@ -302,7 +312,6 @@ static unsigned int getsystraywidth();
 static int gettextprop(Window w, Atom atom, char *text, unsigned int size);
 static void grabbuttons(Client *c, int focused);
 static void grabkeys(void);
-static void incnmaster(const Arg *arg);
 static void keypress(XEvent *e);
 static void killclient(const Arg *arg);
 static void closeclient(Client *c);
@@ -310,7 +319,6 @@ static void manage(Window w, XWindowAttributes *wa, int adopt);
 static void mappingnotify(XEvent *e);
 static void maprequest(XEvent *e);
 static int modekey(XEvent *e, KeySym keysym);
-static void monocle(Monitor *m);
 static void motionnotify(XEvent *e);
 static void movedir(const Arg *arg);
 static void movemouse(const Arg *arg);
@@ -324,10 +332,8 @@ static void outlinehide(void);
 static int outlinerects(XRectangle *rects, int max, int width, int height,
 	int containerw, const XRectangle *tab, int t);
 static void outlineshape(int width, int height, int containerw, const XRectangle *tab);
-static int outlinetabrect(Client *c, XRectangle *tab);
 static void outlineupdate(void);
 static void place(Client *c, int x, int y, int w, int h);
-static void pop(Client *c);
 static void grabmodekeys(int grab);
 static void propertynotify(XEvent *e);
 static void quit(const Arg *arg);
@@ -353,25 +359,40 @@ static int textwidth(const char *s);
 static void setfocus(Client *c);
 static void setfullscreen(Client *c, int fullscreen);
 static void setminimized(Client *c, int minimized);
-static void setlayout(const Arg *arg);
-static void setmfact(const Arg *arg);
 static void setmode(const Arg *arg);
 static void setup(void);
 static void seturgent(Client *c, int urg);
 static void showhide(Client *c);
 static void spawn(const Arg *arg);
 static Monitor *systraytomon(Monitor *m);
-static void tabbed(Monitor *m);
-static void tabselect(Monitor *m);
 static void tag(const Arg *arg);
 static void tagmon(const Arg *arg);
-static void tile(Monitor *m);
-static void tilev(Monitor *m);
 static void togglebar(const Arg *arg);
 static void titleclick(const Arg *arg);
 static void togglefullscr(const Arg *arg);
 static void togglefloating(const Arg *arg);
 static void togglesplit(const Arg *arg);
+/* i3 container tree */
+static void containerlayout(const Arg *arg);
+static void drawdeco(Node *n);
+static Node *leafof(Node *n, Client *c);
+static Node *nodenew(int leaf);
+static void nodefree(Node *n);
+static void split(const Arg *arg);
+static void treefocus(Client *c);
+static void treeforget(Client *c);
+static void treeprepare(Monitor *m);
+static void treemove(Client *c, int dir);
+static void treeswap(Monitor *m, Client *a, Client *b);
+static Node *wintodeco(Window w, Monitor **mp);
+static void loadtrees(void);
+static int savetrees(void);
+static Node *decochild(Node *n, int x, int y);
+static void decoshow(Monitor *m, Node *n, int x, int y, int w, int h);
+static Node *nodefocusleaf(Node *n);
+static Node *nodeneighbour(Node *n, int dir, int wrap);
+static Node *nodewalk(Node *n);
+static void treelayout(Monitor *m, Node *n, int x, int y, int w, int h);
 static void freeicon(Client *c);
 static void unfocus(Client *c, int setfocus);
 static void unmanage(Client *c, int destroyed);
@@ -400,7 +421,6 @@ static Client *wintosystrayicon(Window w);
 static int xerror(Display *d, XErrorEvent *ee);
 static int xerrordummy(Display *d, XErrorEvent *ee);
 static int xerrorstart(Display *d, XErrorEvent *ee);
-static void zoom(const Arg *arg);
 /* tasks: groups of workspaces, each with its own tags 1..10 */
 static void cycletask(const Arg *arg);
 static void deltask(const Arg *arg);
@@ -483,15 +503,13 @@ struct NumTags { char limitexceeded[LENGTH(tags) > 31 ? -1 : 1]; };
 
 /* function implementations */
 
-/* Title bar height for c if it is (not) floating: none when fullscreen or
- * when the client draws its own decorations, except as the tiled member of
- * a tabbed layout, whose title bar is the shared tab strip. */
+/* Title bar height for c if it is (not) floating: none when fullscreen,
+ * when the client draws its own decorations, or when it is tiled in a
+ * stacked/tabbed container, whose title strip shows it instead. */
 static int
 titlehfor(Client *c, int floating)
 {
-	if (c->isfullscreen)
-		return 0;
-	if (c->notitle && !(c->mon && curlayout(c->mon)->arrange == tabbed && !floating))
+	if (c->isfullscreen || c->notitle || (!floating && c->intab))
 		return 0;
 	return titleheight;
 }
@@ -518,9 +536,6 @@ ensuremoncap(Monitor *m)
 	n = MAX(n, 32);
 	m->taskx = erealloc(m->taskx, n * sizeof *m->taskx);
 	m->taskclients = erealloc(m->taskclients, n * sizeof *m->taskclients);
-	m->tabclients = erealloc(m->tabclients, n * sizeof *m->tabclients);
-	m->tabx = erealloc(m->tabx, n * sizeof *m->tabx);
-	m->tabw = erealloc(m->tabw, n * sizeof *m->tabw);
 	m->listcap = n;
 }
 
@@ -667,7 +682,7 @@ applysizehints(Client *c, int *x, int *y, int *w, int *h, int interact)
 			*y = m->wy;
 	}
 
-	if (resizehints || c->isfloating || !curlayout(m)->arrange) {
+	if (resizehints || c->isfloating) {
 		if (!c->hintsvalid)
 			updatesizehints(c);
 		/* see last two sentences in ICCCM 4.1.2.3 */
@@ -715,29 +730,42 @@ void
 arrange(Monitor *m)
 {
 	if (m) {
-		if (curlayout(m)->arrange == tabbed)
-			tabselect(m);
+		treeprepare(m);
 		showhide(m->stack);
 	} else for (m = mons; m; m = m->next) {
-		if (curlayout(m)->arrange == tabbed)
-			tabselect(m);
+		treeprepare(m);
 		showhide(m->stack);
 	}
 	if (m) {
 		arrangemon(m);
 		restack(m);
-	} else for (m = mons; m; m = m->next)
+	} else for (m = mons; m; m = m->next) {
 		arrangemon(m);
+		restack(m);
+	}
 	outlineupdate();
 	savestate();
 }
 
+/* Lay out the tiled clients of the workspace m shows with its tree, inside
+ * the outer gaps, and unmap the title strips no longer shown. */
 void
 arrangemon(Monitor *m)
 {
-	snprintf(m->ltsymbol, sizeof(m->ltsymbol), "%s", curlayout(m)->symbol);
-	if (curlayout(m)->arrange)
-		curlayout(m)->arrange(m);
+	Node *n;
+	unsigned int i;
+
+	if (cleaningup)
+		return;
+	m->decogen++;
+	treelayout(m, TREE(m), m->wx + gappo, m->wy + gappo,
+		m->ww - 2 * gappo, m->wh - 2 * gappo);
+	for (i = 0; i < ntasks * NTAGS; i++)
+		for (n = m->trees[i]; n; n = nodewalk(n))
+			if (n->decomapped && n->decogen != m->decogen) {
+				XUnmapWindow(dpy, n->deco);
+				n->decomapped = 0;
+			}
 }
 
 void
@@ -762,6 +790,7 @@ buttonpress(XEvent *e)
 	Client *c;
 	Monitor *m;
 	XButtonPressedEvent *ev = &e->xbutton;
+	Node *n, *l;
 
 	click = ClkRootWin;
 	if (renaming >= 0)
@@ -796,24 +825,18 @@ buttonpress(XEvent *e)
 			&& ev->x >= selmon->statusx && ev->x < selmon->barw)
 				click = ClkStatusText;
 		}
+	} else if ((n = wintodeco(ev->window, NULL))) {
+		/* a title in a stacked/tabbed strip: that child's focused window */
+		if ((n = decochild(n, ev->x, ev->y)) && (l = nodefocusleaf(n)) && l->c) {
+			click = ClkTab;
+			arg.v = l->c;
+		}
 	} else if ((c = wintoclient(ev->window))) {
 		focus(c);
 		restack(selmon);
-		if (ev->window == c->title) {
-			if (curlayout(c->mon)->arrange == tabbed
-			&& c == c->mon->tabsel && !c->isfloating) {
-				for (i = 0; i < (unsigned int)c->mon->tabn; i++)
-					if (ev->x >= c->mon->tabx[i]
-					&& ev->x < c->mon->tabx[i] + c->mon->tabw[i]) {
-						click = ClkTab;
-						arg.i = (int)i;
-						break;
-					}
-				if (i == (unsigned int)c->mon->tabn)
-					click = ClkTitleBar;
-			} else
-				click = ClkTitleBar;
-		} else if (ev->window == c->frame)
+		if (ev->window == c->title)
+			click = ClkTitleBar;
+		else if (ev->window == c->frame)
 			click = ClkBorder;
 		else {
 			if (ev->window == c->win)
@@ -843,15 +866,11 @@ void
 cleanup(void)
 {
 	Arg a = {.ui = ~0};
-	Layout foo = { "", NULL };
 	Monitor *m;
 	size_t i;
 
-	cleaningup = 1;
+	cleaningup = 1; /* arrange() no longer lays out */
 	view(&a);
-	for (m = mons; m; m = m->next)
-		for (i = 0; i < MAXTASKS * NTAGS; i++)
-			m->lt[i * 2 + m->sellt[i]] = &foo;
 	for (m = mons; m; m = m->next)
 		while (m->stack)
 			unmanage(m->stack, 0);
@@ -892,6 +911,7 @@ void
 cleanupmon(Monitor *mon)
 {
 	Monitor *m;
+	size_t i;
 
 	if (mon == mons)
 		mons = mons->next;
@@ -901,15 +921,11 @@ cleanupmon(Monitor *mon)
 	}
 	XUnmapWindow(dpy, mon->barwin);
 	XDestroyWindow(dpy, mon->barwin);
-	free(mon->lt);
-	free(mon->sellt);
-	free(mon->mfacts);
-	free(mon->nmasters);
+	for (i = 0; i < MAXTASKS * NTAGS; i++)
+		nodefree(mon->trees[i]);
+	free(mon->trees);
 	free(mon->taskx);
 	free(mon->taskclients);
-	free(mon->tabclients);
-	free(mon->tabx);
-	free(mon->tabw);
 	free(mon);
 }
 
@@ -1134,7 +1150,7 @@ configurerequest(XEvent *e)
 	if ((c = wintoclient(ev->window))) {
 		if (ev->window != c->win) {
 			/* request from our own frame/title; ignore */
-		} else if (c->isfloating || !curlayout(c->mon)->arrange) {
+		} else if (c->isfloating) {
 			int th = titleh(c);
 			int cw = c->w - 2 * c->bw;
 			int ch = c->h - 2 * c->bw - c->th;
@@ -1174,37 +1190,20 @@ createmon(void)
 	m->showbar = showbar;
 	m->topbar = topbar;
 	/* sized for MAXTASKS so adding or removing a task never reallocates */
-	m->lt = ecalloc(MAXTASKS * NTAGS * 2, sizeof *m->lt);
-	m->sellt = ecalloc(MAXTASKS * NTAGS, sizeof *m->sellt);
-	m->mfacts = ecalloc(MAXTASKS * NTAGS, sizeof *m->mfacts);
-	m->nmasters = ecalloc(MAXTASKS * NTAGS, sizeof *m->nmasters);
+	m->trees = ecalloc(MAXTASKS * NTAGS, sizeof *m->trees);
 	for (i = 0; i < MAXTASKS * NTAGS; i++)
 		initpertag(m, i);
 	for (i = 0; i < MAXTASKS; i++)
 		m->taskview[i].tagset[0] = m->taskview[i].tagset[1] = 1;
-	snprintf(m->ltsymbol, sizeof(m->ltsymbol), "%s", layouts[0].symbol);
 	return m;
 }
 
-/* Default layouts and factors of one task x tag slot. */
+/* An empty workspace tree for one task x tag slot. */
 void
 initpertag(Monitor *m, unsigned int idx)
 {
-	m->mfacts[idx] = mfact;
-	m->nmasters[idx] = nmaster;
-	m->sellt[idx] = 0;
-	m->lt[idx * 2] = &layouts[0];
-	m->lt[idx * 2 + 1] = &layouts[1 % LENGTH(layouts)];
-}
-
-/* Layouts are remembered per tag so each workspace keeps its own. When
- * several tags are visible the first one owns the monitor's layout. */
-const Layout *
-curlayout(Monitor *m)
-{
-	unsigned int t = PT(curtag(m));
-
-	return m->lt[t * 2 + m->sellt[t]];
+	m->trees[idx] = nodenew(0);
+	m->trees[idx]->layout = m->trees[idx]->lastsplit = defaultlayout;
 }
 
 unsigned int
@@ -1668,99 +1667,22 @@ drawseparator(int x)
 }
 
 /* Title bar of one client, drawn into the shared drw buffer and copied to
- * the frame's title window. i3: 20px, icon + centered title. */
+ * the frame's title window. i3: icon + left-aligned title. */
 void
 drawtitle(Client *c, int focused)
 {
 	char raw[512], title[512];
 	int th = c->th;
 	int tw, pad = 8, avail, textw, iconx, textx;
-	int urgent = c->isurgent;
-	unsigned int seltitle = urgent ? SchemeUrg : focused ? SchemeSel : SchemeNorm;
-	Client *t, **list;
-	int n = 0, i, idx = -1, cellw, tx, twi, narrow;
-	int istabbed;
+	unsigned int seltitle = c->isurgent ? SchemeUrg : focused ? SchemeSel : SchemeNorm;
 
 	if (!c->title || th <= 0)
 		return;
 	tw = c->w - 2 * c->bw;
 	if (tw <= 0)
 		return;
-	istabbed = curlayout(c->mon)->arrange == tabbed;
 
-	if (istabbed && c == c->mon->tabsel && !c->isfloating) {
-		ensuremoncap(c->mon);
-		list = c->mon->tabclients;
-		for (t = nexttiled(c->mon->clients); t; t = nexttiled(t->next))
-			list[n++] = t;
-		if (n > 1) {
-			cellw = tw / n;
-			drw_setscheme(drw, scheme[SchemeNorm]);
-			drw_rect(drw, 0, 0, tw, th, 1, 1);
-			for (i = 0; i < n; i++) {
-				t = list[i];
-				tx = i * cellw;
-				twi = (i == n - 1) ? tw - tx : cellw;
-				c->mon->tabx[i] = tx;
-				c->mon->tabw[i] = twi;
-				if (t == c->mon->tabsel) {
-					idx = i;
-					drw_setscheme(drw, scheme[SchemeSel]);
-				} else
-					drw_setscheme(drw, scheme[SchemeNorm]);
-				drw_rect(drw, tx, 0, twi, th, 1, 1);
-				if (i > 0) {
-					drw_setscheme(drw, scheme[SchemeSeparator]);
-					drw_rect(drw, tx, 0, 1, th, 1, 0);
-				}
-				truncatechars(t->name, raw, sizeof raw, 64);
-				narrow = !t->icon || twi < 6 + ICONSIZE + icongap + 2 + 6;
-				if (narrow) {
-					textx = tx + 6;
-					avail = twi - 12;
-				} else {
-					textx = tx + 6 + ICONSIZE + icongap;
-					avail = twi - (6 + ICONSIZE + icongap) - 6;
-				}
-				if (avail < 1)
-					title[0] = '\0';
-				else if (textwidth(raw) > avail)
-					truncatepx(raw, title, sizeof title, avail);
-				else
-					snprintf(title, sizeof title, "%s", raw);
-				if (!narrow && t->icon)
-					drw_icon(drw, tx + 6, (th - ICONSIZE) / 2, t->icon,
-						&scheme[t == c->mon->tabsel
-						? SchemeSel : SchemeNorm][ColBg]);
-				textw = textwidth(title);
-				if (textw) {
-					drw_setscheme(drw, scheme[t == c->mon->tabsel
-						? SchemeSel : SchemeNorm]);
-					drw_text(drw, textx, 0, textw, th, 0, title, 0);
-				}
-			}
-			c->mon->tabn = n;
-			if (idx >= 0) {
-				long tab[4] = {
-					(idx == 0) ? 0 : c->bw + c->mon->tabx[idx],
-					0,
-					c->mon->tabw[idx]
-						+ ((idx == 0) ? c->bw : 0)
-						+ ((idx == n - 1) ? c->bw : 0),
-					c->bw + titleheight
-				};
-				XChangeProperty(dpy, c->frame, netatom[NetDwmTab],
-					XA_CARDINAL, 32, PropModeReplace,
-					(unsigned char *)tab, 4);
-			}
-			drw_map(drw, c->title, 0, 0, tw, th);
-			return;
-		}
-		c->mon->tabn = 0;
-	}
-	XDeleteProperty(dpy, c->frame, netatom[NetDwmTab]);
-
-	/* single window title: icon (when present) + text, no empty slot */
+	/* icon (when present) + text, no empty slot */
 	truncatechars(c->name, raw, sizeof raw, 64);
 	iconx = pad;
 	textx = pad + (c->icon ? ICONSIZE + icongap : 0);
@@ -1783,17 +1705,20 @@ drawtitle(Client *c, int focused)
 	drw_map(drw, c->title, 0, 0, tw, th);
 }
 
-/* Redraw whatever title window actually shows c: in tabbed mode a hidden
- * tiled client's icon must repaint the shared tab strip, not its own title. */
+/* Redraw whatever shows c's title: its own title bar, or the title strip of
+ * the stacked/tabbed container it is tiled in. */
 static void
 drawclienttitles(Client *c)
 {
-	Client *t = c;
+	Node *l;
 
-	if (curlayout(c->mon)->arrange == tabbed && !c->isfloating
-	&& c->mon->tabsel)
-		t = c->mon->tabsel;
-	drawtitle(t, t == c->mon->sel);
+	if (!c->mon)
+		return;
+	if (!c->isfloating && c->intab && (l = leafof(TREE(c->mon), c))
+	&& l->parent)
+		drawdeco(l->parent);
+	else
+		drawtitle(c, c == c->mon->sel);
 }
 
 /* Taskbar title of c for a pixel budget (0 = no cap), cached per client:
@@ -2039,12 +1964,15 @@ expose(XEvent *e)
 {
 	Client *c;
 	Monitor *m;
+	Node *n;
 	XExposeEvent *ev = &e->xexpose;
 
 	if (ev->count != 0)
 		return;
 	if ((c = wintoclient(ev->window)) && ev->window == c->title)
 		drawtitle(c, c == selmon->sel);
+	else if ((n = wintodeco(ev->window, NULL)))
+		drawdeco(n);
 	else if ((m = wintomon(ev->window))) {
 		drawbar(m);
 		if (m == selmon)
@@ -2069,8 +1997,9 @@ focus(Client *c)
 		grabbuttons(c, 1);
 		setframeborder(c, c->isurgent ? SchemeUrg : SchemeSel);
 		selmon->sel = c;
-		if (curlayout(c->mon)->arrange == tabbed && !c->isfloating)
-			c->mon->tabsel = c;
+		/* the focus path of the tree leads to c: a tab behind others
+		 * becomes the shown one */
+		treefocus(c);
 		/* XSetInputFocus fails with BadMatch on a window that is not
 		 * viewable, and hidden clients have their frame unmapped (another
 		 * tag, another tab). Map it before giving it the keyboard, or the
@@ -2090,36 +2019,28 @@ focus(Client *c)
 	savestate();
 }
 
+/* i3 "focus left/down/up/right". A tiled window moves through the tree:
+ * the nearest container split that way (tabbed counts as horizontal,
+ * stacked as vertical) with a window on that side, then down its focus
+ * path; at the edge it wraps around (focus_wrapping yes). A floating one
+ * goes to the nearest floating window that way. */
 void
 focusdir(const Arg *arg)
 {
 	Client *c, *best = NULL;
+	Node *l, *n;
 	int sx, sy, bestscore = 0;
 
 	if (!selmon->sel)
 		return;
-
-	/* In tabbed/stacking layouts every tiled frame has the same rectangle,
-	 * so geometry cannot choose a neighbour. Left/right cycles the visible
-	 * tiling order instead, i.e. the tabs. */
-	if (arg->i == DirLeft || arg->i == DirRight) {
-		const Layout *l = curlayout(selmon);
-
-		if (l->arrange == tabbed || l->arrange == monocle) {
-			Client *cur = !selmon->sel->isfloating ? selmon->sel : selmon->tabsel;
-			unsigned int n = 0, idx = 0;
-
-			for (c = nexttiled(selmon->clients); c; c = nexttiled(c->next), n++)
-				if (c == cur)
-					idx = n;
-			if (n == 0)
-				return;
-			idx = (arg->i == DirLeft) ? (idx + n - 1) % n : (idx + 1) % n;
-			for (c = nexttiled(selmon->clients); idx--; c = nexttiled(c->next));
-			focus(c);
-			restack(selmon);
+	if (!selmon->sel->isfloating) {
+		if (!(l = leafof(TREE(selmon), selmon->sel)))
 			return;
-		}
+		if (!(n = nodeneighbour(l, arg->i, 1)) || !(l = nodefocusleaf(n)) || !l->c)
+			return;
+		focus(l->c);
+		restack(selmon);
+		return;
 	}
 
 	sx = selmon->sel->x + selmon->sel->w / 2;
@@ -2127,7 +2048,7 @@ focusdir(const Arg *arg)
 	for (c = selmon->clients; c; c = c->next) {
 		int cx, cy, dx, dy, maind, orth, score;
 
-		if (c == selmon->sel || !ISVISIBLE(c))
+		if (c == selmon->sel || !ISVISIBLE(c) || !c->isfloating)
 			continue;
 		cx = c->x + c->w / 2;
 		cy = c->y + c->h / 2;
@@ -2205,8 +2126,6 @@ setminimized(Client *c, int minimized)
 	setclientstate(c, minimized ? IconicState : NormalState);
 	updatenetstate(c);
 	if (minimized) {
-		if (c->mon->tabsel == c)
-			c->mon->tabsel = NULL;
 		if (c->mon->sel == c && c->mon != selmon) {
 			Client *s;
 
@@ -2226,14 +2145,12 @@ setminimized(Client *c, int minimized)
 	savestate();
 }
 
+/* A click on a title in a stacked/tabbed strip (arg->v: the client). */
 void
 focustab(const Arg *arg)
 {
-	Client *c;
+	Client *c = (Client *)arg->v;
 
-	if (arg->i < 0 || arg->i >= selmon->tabn)
-		return;
-	c = selmon->tabclients[arg->i];
 	if (!c || !ISVISIBLE(c))
 		return;
 	focus(c);
@@ -2477,13 +2394,6 @@ grabkeys(void)
 	}
 }
 
-void
-incnmaster(const Arg *arg)
-{
-	NMASTER(selmon) = MAX(NMASTER(selmon) + arg->i, 0);
-	arrange(selmon);
-}
-
 #ifdef XINERAMA
 static int
 isuniquegeom(XineramaScreenInfo *unique, size_t n, XineramaScreenInfo *info)
@@ -2553,7 +2463,6 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 
 	c = ecalloc(1, sizeof(Client));
 	c->win = w;
-	c->cfact = 1.0;
 	c->taskcap = -1;
 	c->extents[0] = -1; /* nothing published yet */
 	c->oldbw = wa->border_width;
@@ -2586,8 +2495,6 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 				c->tags = m->tagset[m->seltags];
 		}
 		c->isfloating = st[2] ? 1 : 0;
-		if (st[3] > 0)
-			c->cfact = st[3] / 1000.0;
 		c->task = st[5] >= 0 && st[5] < ntasks ? (int)st[5] : 0;
 		c->minimized = st[6] ? 1 : 0;
 	}
@@ -2660,8 +2567,7 @@ manage(Window w, XWindowAttributes *wa, int adopt)
 		c->isfloating = c->oldstate = trans != None || c->isfixed;
 	/* A window that does not tile opens centered, whatever position it asked
 	 * for. scan() adopts already placed clients on restart: leave them. */
-	if (!adopt && !c->isfullscreen
-	&& (c->isfloating || !curlayout(c->mon)->arrange))
+	if (!adopt && !c->isfullscreen && c->isfloating)
 		centerclient(c);
 	/* Clients that map already fullscreen (players, games): the frame
 	 * exists now, so setfullscreen() can cover the monitor. */
@@ -2722,54 +2628,6 @@ maprequest(XEvent *e)
 }
 
 void
-tabselect(Monitor *m)
-{
-	Client *c, *first = NULL;
-
-	if (!m || curlayout(m)->arrange != tabbed)
-		return;
-	for (c = nexttiled(m->clients); c; c = nexttiled(c->next)) {
-		if (!first)
-			first = c;
-		if (c == m->sel) {
-			m->tabsel = c;
-			return;
-		}
-	}
-	if (m->tabsel && m->tabsel->mon == m && ISVISIBLE(m->tabsel)
-	&& !m->tabsel->isfloating)
-		return;
-	m->tabsel = first;
-}
-
-void
-tabbed(Monitor *m)
-{
-	Client *c;
-
-	tabselect(m);
-	for (c = nexttiled(m->clients); c; c = nexttiled(c->next))
-		place(c, m->wx + gappo, m->wy + gappo,
-			m->ww - 2 * gappo, m->wh - 2 * gappo);
-}
-
-void
-monocle(Monitor *m)
-{
-	unsigned int n = 0;
-	Client *c;
-
-	for (c = m->clients; c; c = c->next)
-		if (ISVISIBLE(c))
-			n++;
-	if (n > 0) /* override layout symbol */
-		snprintf(m->ltsymbol, sizeof m->ltsymbol, "[%d]", n);
-	for (c = nexttiled(m->clients); c; c = nexttiled(c->next))
-		resize(c, m->wx + gappo, m->wy + gappo,
-			m->ww - 2 * gappo, m->wh - 2 * gappo, 0);
-}
-
-void
 motionnotify(XEvent *e)
 {
 	static Monitor *mon = NULL;
@@ -2816,10 +2674,12 @@ swapclients(Monitor *m, Client *a, Client *b)
 	}
 }
 
+/* i3 "move left/down/up/right": a floating window moves by 10px, a tiled
+ * one through the tree (treemove()). */
 void
 movedir(const Arg *arg)
 {
-	Client *c, *prev = NULL, *next = NULL;
+	Client *c;
 
 	if (!selmon->sel)
 		return;
@@ -2836,16 +2696,7 @@ movedir(const Arg *arg)
 		resize(c, x, y, c->w, c->h, 1);
 		return;
 	}
-	for (c = nexttiled(selmon->clients); c && c != selmon->sel; c = nexttiled(c->next))
-		prev = c;
-	if (!c)
-		return;
-	next = nexttiled(c->next);
-	c = (arg->i == DirLeft || arg->i == DirUp) ? prev : next;
-	if (!c)
-		return;
-	swapclients(selmon, selmon->sel, c);
-	arrange(selmon);
+	treemove(c, arg->i);
 }
 
 void
@@ -2878,7 +2729,8 @@ tiledat(Monitor *m, Client *c, int x, int y)
 	Client *t;
 
 	for (t = nexttiled(m->clients); t; t = nexttiled(t->next))
-		if (t != c && x >= t->x && x < t->x + t->w && y >= t->y && y < t->y + t->h)
+		if (t != c && !t->tabhidden
+		&& x >= t->x && x < t->x + t->w && y >= t->y && y < t->y + t->h)
 			return t;
 	return NULL;
 }
@@ -2902,7 +2754,7 @@ dragmove(Client *c)
 	restack(selmon);
 	ocx = c->x;
 	ocy = c->y;
-	tiled = !c->isfloating && curlayout(c->mon)->arrange;
+	tiled = !c->isfloating;
 	if (XGrabPointer(dpy, root, False, MOUSEMASK, GrabModeAsync, GrabModeAsync,
 		None, cursor[CurMove]->cursor, CurrentTime) != GrabSuccess)
 		return;
@@ -2949,10 +2801,8 @@ dragmove(Client *c)
 			selmon = m;
 			focus(c);
 			restack(m);
-		} else if ((t = tiledat(m, c, x, y))) {
-			swapclients(m, c, t);
-			arrange(m);
-		}
+		} else if ((t = tiledat(m, c, x, y)))
+			treeswap(m, c, t);
 		return;
 	}
 	if ((m = recttomon(c->x, c->y, c->w, c->h)) != selmon) {
@@ -3055,37 +2905,39 @@ outlineshape(int width, int height, int containerw, const XRectangle *tab)
 		rects, n, ShapeSet, Unsorted);
 }
 
-/* Tab rectangle of `c` relative to its frame's outer rect, or 0 when the
- * frame has no shared tab strip. Mirrors the geometry drawtitle() publishes
- * as _DWM_TAB. */
+/* The box the outline surrounds for c: its frame, plus the title strip
+ * above it when c is tiled in a stacked/tabbed container. For a tab, the
+ * tab rectangle relative to the box is stored in *tab and 1 returned. */
 static int
-outlinetabrect(Client *c, XRectangle *tab)
+outlinebox(Client *c, int *x, int *y, int *w, int *h, XRectangle *tab)
 {
-	Monitor *m = c->mon;
-	Client *t;
-	int n = 0, idx = -1, tw, cellw, tx, twi;
+	Node *l, *p, *ch;
+	int k = 0, i = 0, cw;
 
-	if (!m || !c->title || c->isfullscreen || c->isfloating
-	|| titleheight <= 0 || curlayout(m)->arrange != tabbed)
+	*x = c->x;
+	*y = c->y;
+	*w = c->w;
+	*h = c->h;
+	if (c->isfloating || c->isfullscreen || !c->intab
+	|| !(l = leafof(TREE(c->mon), c)) || !(p = l->parent) || !p->decomapped)
 		return 0;
-	tw = c->w - 2 * c->bw;
-	if (tw <= 0)
+	*y = p->y;
+	*h = c->y + c->h - p->y;
+	if (p->layout != Tabbed || p->w < 1)
 		return 0;
-	for (t = nexttiled(m->clients); t; t = nexttiled(t->next), n++)
-		if (t == c)
-			idx = n;
-	if (n <= 1)
+	for (ch = p->first; ch; ch = ch->next)
+		if (ch->present) {
+			if (ch == l)
+				i = k;
+			k++;
+		}
+	if (!k)
 		return 0;
-	cellw = tw / n;
-	if (idx < 0)
-		return 0;
-	tx = idx * cellw;
-	twi = (idx == n - 1) ? tw - tx : cellw;
-	tab->x = (idx == 0) ? 0 : c->bw + tx;
+	cw = p->w / k;
+	tab->x = i * cw + (p->x - c->x);
 	tab->y = 0;
-	tab->width = twi + ((idx == 0) ? c->bw : 0)
-		+ ((idx == n - 1) ? c->bw : 0);
-	tab->height = c->bw + titleheight;
+	tab->width = i == k - 1 ? p->w - i * cw : cw;
+	tab->height = p->decoh;
 	return 1;
 }
 
@@ -3144,30 +2996,32 @@ outlineupdate(void)
 	XRectangle tab;
 	Client *c;
 	int hastab, t = (int)outlinepx;
-	int x, y, w, h;
+	int x, y, w, h, bx, by, bw, bht;
 
 	if (!outlinewin)
 		return;
 	c = selmon ? selmon->sel : NULL;
-	if (!c || !c->mapped || !ISVISIBLE(c) || c->isfullscreen
-	|| c->w < 1 || c->h < 1
-	|| c->w + 2 * t > SHRT_MAX || c->h + 2 * t > SHRT_MAX) {
+	if (!c || !c->mapped || !ISVISIBLE(c) || c->isfullscreen) {
+		outlinehide();
+		return;
+	}
+	hastab = outlinebox(c, &bx, &by, &bw, &bht, &tab);
+	if (bw < 1 || bht < 1 || bw + 2 * t > SHRT_MAX || bht + 2 * t > SHRT_MAX) {
 		outlinehide();
 		return;
 	}
 
-	x = c->x - t;
-	y = c->y - t;
-	w = c->w + 2 * t;
-	h = c->h + 2 * t;
-	hastab = outlinetabrect(c, &tab);
+	x = bx - t;
+	y = by - t;
+	w = bw + 2 * t;
+	h = bht + 2 * t;
 
 	if (!outlinemapped || x != outlinex || y != outliney
 	|| w != outlinew || h != outlineh || hastab != outlinetabvalid
 	|| (hastab && (tab.x != outlinetab.x || tab.y != outlinetab.y
 	|| tab.width != outlinetab.width || tab.height != outlinetab.height))) {
 		XMoveResizeWindow(dpy, outlinewin, x, y, w, h);
-		outlineshape(w, h, c->w, hastab ? &tab : NULL);
+		outlineshape(w, h, bw, hastab ? &tab : NULL);
 		outlinex = x;
 		outliney = y;
 		outlinew = w;
@@ -3187,15 +3041,6 @@ outlineupdate(void)
 	wc.sibling = c->frame;
 	wc.stack_mode = Above;
 	XConfigureWindow(dpy, outlinewin, CWSibling | CWStackMode, &wc);
-}
-
-void
-pop(Client *c)
-{
-	detach(c);
-	attach(c);
-	focus(c);
-	arrange(c->mon);
 }
 
 void
@@ -3269,7 +3114,7 @@ propertynotify(XEvent *e)
 		if (ev->atom == XA_WM_CLASS) {
 			updateclass(c);
 			updateicon(c);
-			drawtitle(c, c == selmon->sel);
+			drawclienttitles(c);
 			drawbar(c->mon);
 		}
 		if (ev->atom == netatom[NetWMWindowType])
@@ -3302,17 +3147,6 @@ restart(const Arg *arg)
 	running = 0;
 }
 
-static long
-layoutindex(const Layout *l)
-{
-	long i;
-
-	for (i = 0; i < (long)LENGTH(layouts); i++)
-		if (l == &layouts[i])
-			return i;
-	return 0;
-}
-
 /* _DWM_CLIENT_STATE and the EWMH _NET_WM_DESKTOP of one client. Both are
  * kept up to date (not only at restart) so even a crashed dwm can be
  * restored by the next one. */
@@ -3324,7 +3158,7 @@ setclientprops(Client *c, long order)
 	st[0] = c->tags;
 	st[1] = c->mon->num;
 	st[2] = c->isfullscreen ? c->oldstate : c->isfloating;
-	st[3] = (long)(c->cfact * 1000 + 0.5);
+	st[3] = 1000; /* was the tiling share before the container tree */
 	st[4] = order;
 	st[5] = c->task;
 	st[6] = c->minimized;
@@ -3393,14 +3227,13 @@ savestate(void)
 	TaskView tv;
 	long *buf, order, desk;
 	size_t n, k, nmons = 0;
-	unsigned int t;
 	int task;
 
 	if (!stateready || cleaningup || !selmon)
 		return;
 	for (m = mons; m; m = m->next)
 		nmons++;
-	n = STATEHEAD + nmons * (MONSTATE + ntasks * (VIEWSTATE + TAGSTATE * NTAGS));
+	n = STATEHEAD + nmons * (MONSTATE + ntasks * VIEWSTATE);
 	buf = ecalloc(n, sizeof(long));
 	buf[0] = STATEMAGIC;
 	buf[1] = NTAGS;
@@ -3420,13 +3253,6 @@ savestate(void)
 			buf[k++] = tv.tagset[1];
 			buf[k++] = (long)tv.sel;
 		}
-		for (t = 0; t < ntasks * NTAGS; t++) {
-			buf[k++] = m->sellt[t];
-			buf[k++] = layoutindex(m->lt[t * 2]);
-			buf[k++] = layoutindex(m->lt[t * 2 + 1]);
-			buf[k++] = (long)(m->mfacts[t] * 1000 + 0.5);
-			buf[k++] = m->nmasters[t];
-		}
 		for (order = 0, c = m->clients; c; c = c->next, order++)
 			setclientprops(c, order);
 	}
@@ -3438,6 +3264,7 @@ savestate(void)
 		prevn = n;
 	} else
 		free(buf);
+	savetrees();
 	desk = seltask * NTAGS + curtag(selmon);
 	if (desk != prevdesk) {
 		XChangeProperty(dpy, root, netatom[NetCurrentDesktop], XA_CARDINAL, 32,
@@ -3446,21 +3273,20 @@ savestate(void)
 	}
 }
 
+/* A tag's layout from a dwm before the container tree (dwm1/dwm2 state):
+ * the layout it showed becomes the layout of its workspace tree. The old
+ * layouts were tile, tilev, monocle, tabbed and floating. */
 static void
 loadtagstate(Monitor *m, unsigned int idx, const long *st)
 {
-	long v;
+	static const int map[] = { SplitH, SplitV, Stacked, Tabbed, SplitH };
+	long l = st[1 + (st[0] & 1)];
 
-	m->sellt[idx] = st[0] & 1;
-	if (st[1] >= 0 && st[1] < (long)LENGTH(layouts))
-		m->lt[idx * 2] = &layouts[st[1]];
-	if (st[2] >= 0 && st[2] < (long)LENGTH(layouts))
-		m->lt[idx * 2 + 1] = &layouts[st[2]];
-	v = st[3];
-	if (v >= 50 && v <= 950)
-		m->mfacts[idx] = v / 1000.0;
-	if (st[4] >= 0 && st[4] < 64)
-		m->nmasters[idx] = (int)st[4];
+	if (l >= 0 && l < (long)LENGTH(map) && m->trees[idx]) {
+		m->trees[idx]->layout = map[l];
+		if (map[l] == SplitH || map[l] == SplitV)
+			m->trees[idx]->lastsplit = map[l];
+	}
 }
 
 static void
@@ -3480,7 +3306,7 @@ void
 loadstate(void)
 {
 	Atom type;
-	int format, task, savedtasks, v1;
+	int format, task, savedtasks, v1, tagstate;
 	unsigned long n, after, k, monlen, head;
 	unsigned char *p = NULL;
 	long *st, nmons, i;
@@ -3492,19 +3318,20 @@ loadstate(void)
 		return;
 	st = (long *)p;
 	if (type != XA_CARDINAL || format != 32 || n < STATEHEAD1
-	|| (st[0] != STATEMAGIC && st[0] != STATEMAGIC1)
+	|| (st[0] != STATEMAGIC && st[0] != STATEMAGIC2 && st[0] != STATEMAGIC1)
 	|| st[1] != (long)NTAGS
-	|| (st[0] == STATEMAGIC && (n < STATEHEAD || st[4] < 1 || st[4] > MAXTASKS))) {
+	|| (st[0] != STATEMAGIC1 && (n < STATEHEAD || st[4] < 1 || st[4] > MAXTASKS))) {
 		XFree(p);
 		return;
 	}
 	v1 = st[0] == STATEMAGIC1;
+	tagstate = st[0] == STATEMAGIC ? 0 : TAGSTATE; /* dwm3: in _DWM_TREE */
 	nmons = st[2];
 	loadedselmon = (int)st[3];
 	savedtasks = v1 ? 1 : (int)st[4];
 	head = v1 ? STATEHEAD1 : STATEHEAD;
 	monlen = v1 ? MONSTATE1 + TAGSTATE * NTAGS
-		: MONSTATE + savedtasks * (VIEWSTATE + TAGSTATE * NTAGS);
+		: MONSTATE + savedtasks * (VIEWSTATE + tagstate * NTAGS);
 	if (!v1) {
 		seltask = st[5] >= 0 && st[5] < ntasks ? (int)st[5] : 0;
 		prevtask = st[6] >= 0 && st[6] < ntasks ? (int)st[6] : seltask;
@@ -3528,7 +3355,7 @@ loadstate(void)
 				loadview(&m->taskview[task], vs[task * VIEWSTATE],
 					vs[task * VIEWSTATE + 1], vs[task * VIEWSTATE + 2],
 					vs[task * VIEWSTATE + 3]);
-				for (t = 0; t < NTAGS; t++)
+				for (t = 0; tagstate && t < NTAGS; t++)
 					loadtagstate(m, task * NTAGS + t,
 						ts + (task * NTAGS + t) * TAGSTATE);
 			}
@@ -3831,14 +3658,14 @@ dragresize(Client *c, int anchor)
 					ny = ocy + och - (2 * c->bw + c->th + 1);
 				nh = 2 * c->bw + c->th + 1;
 			}
-			if (!c->isfloating && curlayout(c->mon)->arrange
+			if (!c->isfloating
 			&& (abs(nw - c->w) > snap || abs(nh - c->h) > snap)) {
 				/* Drag-to-float keeps the current cell; the explicit
 				 * Mod+Space toggle is what restores natural size. */
 				c->isfloating = 1;
 				arrange(c->mon);
 			}
-			if (!curlayout(c->mon)->arrange || c->isfloating)
+			if (c->isfloating)
 				resize(c, nx, ny, nw, nh, 1);
 			break;
 		}
@@ -3858,6 +3685,7 @@ restack(Monitor *m)
 	Client *c;
 	XEvent ev;
 	XWindowChanges wc;
+	Node *n;
 
 	drawbar(m);
 	if (m->sel) {
@@ -3865,27 +3693,32 @@ restack(Monitor *m)
 			/* Fullscreen must cover the bar. */
 			XRaiseWindow(dpy, m->sel->frame);
 		} else {
-			/* Tiled group: directly below the bar, in stack order. */
-			if (curlayout(m)->arrange) {
-				wc.stack_mode = Below;
-				wc.sibling = m->barwin;
-				for (c = m->stack; c; c = c->snext)
-					if (!c->isfloating && ISVISIBLE(c)) {
-						XConfigureWindow(dpy, c->frame, CWSibling|CWStackMode, &wc);
-						wc.sibling = c->frame;
-					}
-			}
-			/* Floating group (or the whole floating layout): above the
-			 * tiled group, below the bar; the selected window on top. */
+			/* Tiled group: directly below the bar, in stack order,
+			 * then the title strips of stacked/tabbed containers
+			 * (the focus outline sits right above the focused frame
+			 * and must cover the edge of its strip). */
 			wc.stack_mode = Below;
 			wc.sibling = m->barwin;
 			for (c = m->stack; c; c = c->snext)
-				if (c != m->sel && ISVISIBLE(c)
-				&& (!curlayout(m)->arrange || c->isfloating)) {
+				if (!c->isfloating && ISVISIBLE(c)) {
 					XConfigureWindow(dpy, c->frame, CWSibling|CWStackMode, &wc);
 					wc.sibling = c->frame;
 				}
-			if (!curlayout(m)->arrange || m->sel->isfloating) {
+			for (n = TREE(m); n; n = nodewalk(n))
+				if (n->decomapped) {
+					XConfigureWindow(dpy, n->deco, CWSibling|CWStackMode, &wc);
+					wc.sibling = n->deco;
+				}
+			/* Floating group: above the tiled group, below the bar;
+			 * the selected window on top. */
+			wc.stack_mode = Below;
+			wc.sibling = m->barwin;
+			for (c = m->stack; c; c = c->snext)
+				if (c != m->sel && ISVISIBLE(c) && c->isfloating) {
+					XConfigureWindow(dpy, c->frame, CWSibling|CWStackMode, &wc);
+					wc.sibling = c->frame;
+				}
+			if (m->sel->isfloating) {
 				wc.sibling = m->barwin;
 				wc.stack_mode = Below;
 				XConfigureWindow(dpy, m->sel->frame, CWSibling|CWStackMode, &wc);
@@ -4016,10 +3849,9 @@ sendmon(Client *c, Monitor *m)
 	if (c->mon == m)
 		return;
 	unfocus(c, 1);
+	treeforget(c);
 	detach(c);
 	detachstack(c);
-	if (c->mon->tabsel == c)
-		c->mon->tabsel = NULL;
 	c->mon = m;
 	c->tags = m->tagset[m->seltags]; /* assign tags of target monitor */
 	attach(c);
@@ -4117,41 +3949,6 @@ setfullscreen(Client *c, int fullscreen)
 }
 
 void
-setlayout(const Arg *arg)
-{
-	unsigned int t = PT(curtag(selmon));
-	unsigned int slot;
-
-	if (!arg || !arg->v || arg->v != selmon->lt[t * 2 + selmon->sellt[t]])
-		selmon->sellt[t] ^= 1;
-	slot = t * 2 + selmon->sellt[t];
-	if (arg && arg->v)
-		selmon->lt[slot] = (Layout *)arg->v;
-	snprintf(selmon->ltsymbol, sizeof(selmon->ltsymbol), "%s", selmon->lt[slot]->symbol);
-	if (selmon->sel)
-		arrange(selmon);
-	else {
-		drawbar(selmon);
-		savestate();
-	}
-}
-
-/* arg > 1.0 will set mfact absolutely */
-void
-setmfact(const Arg *arg)
-{
-	float f;
-
-	if (!arg || !curlayout(selmon)->arrange)
-		return;
-	f = arg->f < 1.0 ? arg->f + MFACT(selmon) : arg->f - 1.0;
-	if (f < 0.05 || f > 0.95)
-		return;
-	MFACT(selmon) = f;
-	arrange(selmon);
-}
-
-void
 setmode(const Arg *arg)
 {
 	int newmode = (wmmode == arg->i) ? ModeNormal : arg->i;
@@ -4200,51 +3997,38 @@ grabmodekeys(int grab)
 	XSync(dpy, False);
 }
 
-/* i3's "resize grow/shrink width/height" for a tiled window. The axis that
- * crosses the master/stack split moves the split (mfact, from the side of
- * the focused window); the other axis changes the window's share of its
- * column or row (cfact) by the same 2 percentage points. */
+/* i3's "resize grow/shrink width/height" for a tiled window: the nearest
+ * container split that way (SplitH for the width, SplitV for the height)
+ * with another window in it gives the window's branch 2 percentage points
+ * more or less of it; the others keep their proportions. */
 static void
 resizetiled(Client *c, int dw, int dh)
 {
-	Monitor *m = c->mon;
-	void (*ar)(Monitor *) = curlayout(m)->arrange;
-	unsigned int n = 0, idx = 0, nm, first, count;
-	int splitdir, sharedir;
-	float total = 0, share, rest;
-	Client *t;
-	Arg a;
+	Node *n, *p, *ch;
+	int split = dw ? SplitH : SplitV, dir = dw ? dw : dh, k;
+	float total, share, rest;
 
-	if (ar != tile && ar != tilev)
+	if (!(n = leafof(TREE(c->mon), c)))
 		return;
-	for (t = nexttiled(m->clients); t; t = nexttiled(t->next), n++)
-		if (t == c)
-			idx = n;
-	nm = MIN(n, (unsigned int)NMASTER(m));
-	splitdir = ar == tile ? dw : dh;
-	sharedir = ar == tile ? dh : dw;
-
-	if (splitdir) {
-		if (!nm || nm == n)
-			return;
-		a.f = (idx < nm ? 0.02f : -0.02f) * splitdir;
-		setmfact(&a);
-		return;
+	for (; n->parent; n = n->parent) {
+		p = n->parent;
+		if (p->layout != split)
+			continue;
+		for (k = 0, total = 0, ch = p->first; ch; ch = ch->next)
+			if (ch->present) {
+				k++;
+				total += ch->fact;
+			}
+		if (k >= 2)
+			break;
 	}
-	if (!sharedir)
+	if (!n->parent || total <= 0)
 		return;
-	first = idx < nm ? 0 : nm;
-	count = idx < nm ? nm : n - nm;
-	if (count < 2)
-		return;
-	for (n = 0, t = nexttiled(m->clients); t; t = nexttiled(t->next), n++)
-		if (n >= first && n < first + count)
-			total += t->cfact;
-	rest = total - c->cfact;
-	share = c->cfact / total + 0.02f * sharedir;
+	rest = total - n->fact;
+	share = n->fact / total + 0.02f * dir;
 	share = MAX(0.05f, MIN(0.95f, share));
-	c->cfact = MAX(0.05f, MIN(20.0f, share * rest / (1 - share)));
-	arrange(m);
+	n->fact = MAX(0.01f, MIN(100.0f, share * rest / (1 - share)));
+	arrange(c->mon);
 }
 
 int
@@ -4269,7 +4053,7 @@ modekey(XEvent *e, KeySym keysym)
 	if (wmmode == ModeResize) {
 		if (c->isfullscreen)
 			return 1;
-		if (c->isfloating || !curlayout(c->mon)->arrange) {
+		if (c->isfloating) {
 			int x = c->x, y = c->y, w = c->w, h = c->h;
 
 			switch (keysym) {
@@ -4280,12 +4064,6 @@ modekey(XEvent *e, KeySym keysym)
 			default: return 1;
 			}
 			resize(c, x, y, w, h, 1);
-		} else if (shift && (keysym == XK_Up || keysym == XK_l)) {
-			a.i = -1;
-			incnmaster(&a);
-		} else if (shift && (keysym == XK_Down || keysym == XK_k)) {
-			a.i = 1;
-			incnmaster(&a);
 		} else {
 			switch (keysym) {
 			case XK_Left:  case XK_j: resizetiled(c, -1, 0); break;
@@ -4304,7 +4082,7 @@ modekey(XEvent *e, KeySym keysym)
 			return 1;
 		if (shift)
 			step = 50;
-		if (c->isfloating || !curlayout(c->mon)->arrange) {
+		if (c->isfloating) {
 			int x = c->x, y = c->y;
 
 			switch (keysym) {
@@ -4408,6 +4186,7 @@ setup(void)
 	dwmatom[MotifWMHints] = XInternAtom(dpy, "_MOTIF_WM_HINTS", False);
 	dwmatom[DwmClientState] = XInternAtom(dpy, "_DWM_CLIENT_STATE", False);
 	dwmatom[DwmState] = XInternAtom(dpy, "_DWM_STATE", False);
+	dwmatom[DwmTree] = XInternAtom(dpy, "_DWM_TREE", False);
 	xatom[Manager] = XInternAtom(dpy, "MANAGER", False);
 	xatom[Xembed] = XInternAtom(dpy, "_XEMBED", False);
 	xatom[XembedInfo] = XInternAtom(dpy, "_XEMBED_INFO", False);
@@ -4419,8 +4198,9 @@ setup(void)
 	scheme = ecalloc(LENGTH(colors), sizeof(Clr *));
 	for (i = 0; i < LENGTH(colors); i++)
 		scheme[i] = drw_scm_create(drw, colors[i], 3);
-	/* monitors' tags/layouts from a previous dwm (restart) */
+	/* monitors' tags and workspace trees from a previous dwm (restart) */
 	loadstate();
+	loadtrees();
 	/* init focus outline */
 	outlinecreate();
 	/* init system tray */
@@ -4475,7 +4255,7 @@ seturgent(Client *c, int urg)
 		int focused = c == selmon->sel;
 
 		setframeborder(c, urg ? SchemeUrg : focused ? SchemeSel : SchemeNorm);
-		drawtitle(c, focused);
+		drawclienttitles(c);
 	}
 	updatenetstate(c);
 	/* a client without WM_HINTS (EWMH demands-attention) gets them, so
@@ -4490,12 +4270,10 @@ seturgent(Client *c, int urg)
 void
 showhide(Client *c)
 {
-	int tabs;
-
 	if (!c)
 		return;
-	tabs = curlayout(c->mon)->arrange == tabbed;
-	if (ISVISIBLE(c) && (!tabs || c->isfloating || c == c->mon->tabsel)) {
+	/* a tiled window behind another tab of its container stays hidden */
+	if (ISVISIBLE(c) && (c->isfloating || !c->tabhidden)) {
 		/* show clients top down */
 		XMoveResizeWindow(dpy, c->frame, c->x, c->y,
 			c->w - 2 * c->bw, c->h - 2 * c->bw);
@@ -4509,7 +4287,7 @@ showhide(Client *c)
 			XClearArea(dpy, c->win, 0, 0, 0, 0, True);
 		}
 		drawtitle(c, c == selmon->sel);
-		if ((!curlayout(c->mon)->arrange || c->isfloating) && !c->isfullscreen)
+		if (c->isfloating && !c->isfullscreen)
 			resize(c, c->x, c->y, c->w, c->h, 0);
 		showhide(c->snext);
 	} else {
@@ -4579,98 +4357,932 @@ place(Client *c, int x, int y, int w, int h)
 	resize(c, x, y, w, h, 0);
 }
 
-/* Place `k` tiled clients starting at c inside x,y,w,h: side by side when
- * `horiz`, stacked otherwise. Each one gets a share of the length that is
- * proportional to its cfact; the last one takes the rounding remainder so
- * the gaps stay exact. Returns the first client after them. */
-static Client *
-splitarea(Client *c, unsigned int k, int x, int y, int w, int h, int horiz)
+/* ---- i3 container tree ------------------------------------------------ */
+
+Node *
+nodenew(int leaf)
 {
-	unsigned int i;
+	Node *n = ecalloc(1, sizeof *n);
+
+	n->leaf = leaf;
+	n->layout = n->lastsplit = SplitH;
+	n->fact = 1.0;
+	return n;
+}
+
+void
+nodefree(Node *n)
+{
+	Node *ch, *next;
+
+	if (!n)
+		return;
+	for (ch = n->first; ch; ch = next) {
+		next = ch->next;
+		nodefree(ch);
+	}
+	if (n->deco)
+		XDestroyWindow(dpy, n->deco);
+	free(n);
+}
+
+/* Next node of a preorder walk of the tree n belongs to (NULL at the end). */
+static Node *
+nodewalk(Node *n)
+{
+	if (n->first)
+		return n->first;
+	for (; n; n = n->parent)
+		if (n->next)
+			return n->next;
+	return NULL;
+}
+
+static int
+nodecount(Node *p, int presentonly)
+{
+	Node *ch;
+	int k = 0;
+
+	for (ch = p->first; ch; ch = ch->next)
+		if (!presentonly || ch->present)
+			k++;
+	return k;
+}
+
+/* Insert n into p after sibling `after`, at the end when it is NULL. */
+static void
+nodeinsert(Node *p, Node *n, Node *after)
+{
+	Node **pp;
+
+	n->parent = p;
+	if (after) {
+		n->next = after->next;
+		after->next = n;
+		return;
+	}
+	for (pp = &p->first; *pp; pp = &(*pp)->next);
+	n->next = NULL;
+	*pp = n;
+}
+
+static void
+nodeinsertbefore(Node *p, Node *n, Node *before)
+{
+	Node **pp;
+
+	n->parent = p;
+	for (pp = &p->first; *pp && *pp != before; pp = &(*pp)->next);
+	n->next = *pp;
+	*pp = n;
+}
+
+/* Unlink n from its parent, whose focus moves to a neighbour. */
+static void
+nodeunlink(Node *n)
+{
+	Node **pp, *p = n->parent, *prev = NULL;
+
+	if (!p)
+		return;
+	for (pp = &p->first; *pp && *pp != n; prev = *pp, pp = &(*pp)->next);
+	if (*pp)
+		*pp = n->next;
+	if (p->focus == n)
+		p->focus = n->next ? n->next : prev;
+	n->parent = n->next = NULL;
+}
+
+/* Containers left empty go away, the workspace root stays. */
+static void
+nodeprune(Node *p)
+{
+	Node *up;
+
+	while (p && p->parent && !p->first) {
+		up = p->parent;
+		nodeunlink(p);
+		nodefree(p);
+		p = up;
+	}
+}
+
+static void
+noderemove(Node *n)
+{
+	Node *p = n->parent;
+
+	nodeunlink(n);
+	nodefree(n);
+	nodeprune(p);
+}
+
+/* Mean share of p's children: what a node joining p starts with. */
+static float
+nodemeanfact(Node *p)
+{
+	Node *ch;
 	float total = 0;
-	Client *t;
-	int pos, end, sz, avail;
+	int k = 0;
 
-	if (!k)
-		return c;
-	for (i = 0, t = c; t && i < k; t = nexttiled(t->next), i++)
-		total += t->cfact;
-	if (total <= 0)
-		total = 1;
-	avail = (horiz ? w : h) - (int)(k - 1) * gappx;
-	pos = horiz ? x : y;
-	end = horiz ? x + w : y + h;
-	for (i = 0; c && i < k; c = nexttiled(c->next), i++) {
-		sz = (i == k - 1) ? end - pos : (int)(avail * c->cfact / total);
-		if (horiz)
-			place(c, pos, y, sz, h);
+	for (ch = p->first; ch; ch = ch->next, k++)
+		total += ch->fact;
+	return k && total > 0 ? total / k : 1.0;
+}
+
+Node *
+leafof(Node *n, Client *c)
+{
+	Node *ch, *r;
+
+	if (!n || !c)
+		return NULL;
+	if (n->leaf)
+		return n->c == c ? n : NULL;
+	for (ch = n->first; ch; ch = ch->next)
+		if ((r = leafof(ch, c)))
+			return r;
+	return NULL;
+}
+
+/* The child of a stacked/tabbed container that is shown: the one on the
+ * focus path, else the first one holding a shown window. */
+static Node *
+nodeshown(Node *n)
+{
+	Node *ch;
+
+	if (n->focus && n->focus->parent == n && n->focus->present)
+		return n->focus;
+	for (ch = n->first; ch && !ch->present; ch = ch->next);
+	return ch;
+}
+
+/* Down n's focus path to a leaf, through children with shown windows
+ * (i3 con_descend_focused). */
+static Node *
+nodefocusleaf(Node *n)
+{
+	Node *ch;
+
+	while (n && !n->leaf) {
+		if (!(ch = nodeshown(n)))
+			ch = n->focus && n->focus->parent == n ? n->focus : n->first;
+		n = ch;
+	}
+	return n;
+}
+
+static int
+dirhoriz(int dir)
+{
+	return dir == DirLeft || dir == DirRight;
+}
+
+/* Containers that are traversed left/right: tabs are side by side. */
+static int
+nodehoriz(Node *n)
+{
+	return n->layout == SplitH || n->layout == Tabbed;
+}
+
+static Node *
+nodepresentsibling(Node *n, int fwd)
+{
+	Node *s, *best = NULL;
+
+	if (fwd) {
+		for (s = n->next; s && !s->present; s = s->next);
+		return s;
+	}
+	for (s = n->parent->first; s && s != n; s = s->next)
+		if (s->present)
+			best = s;
+	return best;
+}
+
+/* The node next to n in direction dir: in the nearest ancestor that is
+ * laid out along dir and has one that way. With wrap, at the edge of the
+ * workspace the other end of the outermost such container. */
+static Node *
+nodeneighbour(Node *n, int dir, int wrap)
+{
+	Node *s, *outer = NULL;
+	int fwd = dir == DirRight || dir == DirDown;
+
+	for (; n->parent; n = n->parent) {
+		if (nodehoriz(n->parent) != dirhoriz(dir))
+			continue;
+		if ((s = nodepresentsibling(n, fwd)))
+			return s;
+		if (nodecount(n->parent, 1) > 1)
+			outer = n->parent;
+	}
+	if (!wrap || !outer)
+		return NULL;
+	for (s = outer->first, n = NULL; s; s = s->next)
+		if (s->present && (!fwd || !n)) {
+			n = s;
+			if (fwd)
+				break;
+		}
+	return n;
+}
+
+/* Does c have a leaf in the tree of the workspace m shows? Minimized
+ * windows keep their place; floating ones are not in the tree, except a
+ * fullscreen window that was tiled. */
+static int
+treebelongs(Monitor *m, Client *c)
+{
+	return c->mon == m && c->task == seltask
+		&& (c->tags & m->tagset[m->seltags])
+		&& (c->isfullscreen ? !c->oldstate : !c->isfloating);
+}
+
+/* Bring the tree of the workspace m shows in line with its clients:
+ * leaves of windows that left go, leaves restored by a restart get their
+ * client, and new tiled windows open after the focused one, in its
+ * container (i3). */
+static void
+treesync(Monitor *m)
+{
+	static Node **leaves;
+	static int cap;
+	Node *root = TREE(m), *n, *after;
+	Client *c;
+	int k = 0, i;
+
+	for (n = root; n; n = nodewalk(n))
+		if (n->leaf) {
+			if (k >= cap) {
+				cap = cap ? cap * 2 : 64;
+				leaves = erealloc(leaves, cap * sizeof *leaves);
+			}
+			leaves[k++] = n;
+		}
+	for (i = 0; i < k; i++) {
+		n = leaves[i];
+		if (!n->c) {
+			if ((c = wintoclient(n->win)) && c->win == n->win && !leafof(root, c))
+				n->c = c;
+			else if (!stateready && !c)
+				continue; /* not adopted yet */
+			else {
+				noderemove(n);
+				continue;
+			}
+		}
+		if (!treebelongs(m, n->c))
+			noderemove(n);
+	}
+	after = m->sel ? leafof(root, m->sel) : NULL;
+	if (!after && (after = nodefocusleaf(root)) && !after->leaf)
+		after = NULL;
+	for (c = m->clients; c; c = c->next) {
+		if (!treebelongs(m, c) || leafof(root, c))
+			continue;
+		n = nodenew(1);
+		n->c = c;
+		n->win = c->win;
+		if (!stateready) {
+			/* scan() adopts windows without a saved tree (a dwm
+			 * before the tree) last to first: keep their order */
+			n->fact = nodemeanfact(root);
+			nodeinsertbefore(root, n, root->first);
+			continue;
+		}
+		if (after) {
+			n->fact = nodemeanfact(after->parent);
+			nodeinsert(after->parent, n, after);
+		} else {
+			n->fact = nodemeanfact(root);
+			nodeinsert(root, n, NULL);
+		}
+		after = n;
+	}
+}
+
+static int
+treepresent(Node *n)
+{
+	Node *ch;
+
+	if (n->leaf)
+		return n->present = n->c && ISVISIBLE(n->c) && !n->c->isfloating;
+	n->present = 0;
+	for (ch = n->first; ch; ch = ch->next)
+		if (treepresent(ch))
+			n->present = 1;
+	return n->present;
+}
+
+static void
+treeshow(Node *n, int shown, int intab)
+{
+	Node *ch, *vis = NULL;
+	int strip = n->layout == Stacked || n->layout == Tabbed;
+
+	if (n->leaf) {
+		if (n->c) {
+			n->c->tabhidden = !shown;
+			n->c->intab = intab;
+		}
+		return;
+	}
+	if (strip)
+		vis = nodeshown(n);
+	for (ch = n->first; ch; ch = ch->next)
+		treeshow(ch, shown && (!strip || ch == vis), strip);
+}
+
+/* Before showhide(): sync the shown workspace's tree and mark the tiled
+ * windows hidden behind other tabs and those without own title bar. */
+void
+treeprepare(Monitor *m)
+{
+	if (cleaningup)
+		return;
+	treesync(m);
+	/* the focused window may have joined the tree just now: it must be
+	 * the shown tab of its containers */
+	if (m->sel)
+		treefocus(m->sel);
+	treepresent(TREE(m));
+	treeshow(TREE(m), 1, 0);
+}
+
+/* Lay out n in x,y,w,h (outer rectangle, gaps between the children of a
+ * split). A stacked/tabbed container puts its title strip on top and the
+ * shown child under it, without a gap: the strip is that child's title. */
+static void
+treelayout(Monitor *m, Node *n, int x, int y, int w, int h)
+{
+	Node *ch;
+	int k = 0, i, pos, end, sz, avail, horiz, sh;
+	float total = 0;
+
+	n->x = x;
+	n->y = y;
+	n->w = w;
+	n->h = h;
+	if (!n->present || w < 1 || h < 1)
+		return;
+	if (n->leaf) {
+		place(n->c, x, y, w, h);
+		return;
+	}
+	if (n->layout == SplitH || n->layout == SplitV) {
+		for (ch = n->first; ch; ch = ch->next)
+			if (ch->present) {
+				k++;
+				total += ch->fact;
+			}
+		if (total <= 0)
+			total = 1;
+		horiz = n->layout == SplitH;
+		avail = (horiz ? w : h) - (k - 1) * gappx;
+		pos = horiz ? x : y;
+		end = horiz ? x + w : y + h;
+		for (i = 0, ch = n->first; ch; ch = ch->next) {
+			if (!ch->present)
+				continue;
+			sz = i == k - 1 ? end - pos : (int)(avail * ch->fact / total);
+			if (horiz)
+				treelayout(m, ch, pos, y, sz, h);
+			else
+				treelayout(m, ch, x, pos, w, sz);
+			pos += sz + gappx;
+			i++;
+		}
+		return;
+	}
+	k = nodecount(n, 1);
+	sh = titleheight * (n->layout == Stacked ? k : 1);
+	sh = MIN(sh, h - 1);
+	decoshow(m, n, x, y, w, sh);
+	treelayout(m, nodeshown(n), x, y + sh, w, h - sh);
+}
+
+/* Map (creating it if needed) and draw the title strip of n. */
+static void
+decoshow(Monitor *m, Node *n, int x, int y, int w, int h)
+{
+	XSetWindowAttributes wa;
+
+	n->decogen = m->decogen;
+	n->decoh = h;
+	if (h < 1)
+		return;
+	if (!n->deco) {
+		wa.override_redirect = True;
+		wa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
+		wa.event_mask = ButtonPressMask|ExposureMask;
+		n->deco = XCreateWindow(dpy, root, x, y, w, h, 0,
+			DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
+			CWOverrideRedirect|CWBackPixel|CWEventMask, &wa);
+		XDefineCursor(dpy, n->deco, cursor[CurNormal]->cursor);
+		XStoreName(dpy, n->deco, "dwm-tabs");
+	} else
+		XMoveResizeWindow(dpy, n->deco, x, y, w, h);
+	if (!n->decomapped) {
+		XMapWindow(dpy, n->deco);
+		n->decomapped = 1;
+	}
+	drawdeco(n);
+}
+
+static int
+nodeurgent(Node *n)
+{
+	Node *ch;
+
+	if (n->leaf)
+		return n->c && n->c->isurgent;
+	for (ch = n->first; ch; ch = ch->next)
+		if (ch->present && nodeurgent(ch))
+			return 1;
+	return 0;
+}
+
+/* i3's title of a container shown as a tab: its layout and the classes of
+ * its windows, e.g. "V[st firefox]". */
+static void
+nodelabel(Node *n, char *buf, size_t size)
+{
+	static const char sym[] = { 'H', 'V', 'S', 'T' };
+	Node *ch;
+	size_t len;
+
+	if (n->leaf) {
+		snprintf(buf, size, "%s", n->c ? n->c->name : "");
+		return;
+	}
+	len = snprintf(buf, size, "%c[", sym[n->layout & 3]);
+	for (ch = n->first; ch && len + 2 < size; ch = ch->next) {
+		if (!ch->present)
+			continue;
+		if (ch->leaf)
+			len += snprintf(buf + len, size - len, "%s%s", len > 2 ? " " : "",
+				ch->c && ch->c->class[0] ? ch->c->class : "?");
+		else {
+			if (len > 2 && len + 1 < size)
+				buf[len++] = ' ';
+			nodelabel(ch, buf + len, size - len);
+			len += strlen(buf + len);
+		}
+	}
+	if (len >= size - 1)
+		len = size - 2;
+	buf[len++] = ']';
+	buf[len] = '\0';
+}
+
+/* Cell of child i of the k shown ones in n's strip, relative to the strip. */
+static void
+decocell(Node *n, int i, int k, int *x, int *y, int *w, int *h)
+{
+	int cw = n->w / MAX(k, 1);
+
+	if (n->layout == Tabbed) {
+		*x = i * cw;
+		*y = 0;
+		*w = i == k - 1 ? n->w - *x : cw;
+		*h = n->decoh;
+	} else {
+		*x = 0;
+		*y = i * titleheight;
+		*w = n->w;
+		*h = MIN(titleheight, n->decoh - *y);
+	}
+}
+
+/* The title strip of a stacked/tabbed container: one cell per child with
+ * a shown window (icon and title, or the container summary), the shown
+ * child highlighted. */
+void
+drawdeco(Node *n)
+{
+	Node *ch, *vis;
+	char label[512], raw[512], title[512];
+	int k, i, cx, cy, cw, chh, narrow, textx, avail, textw, schemeidx;
+	Client *c;
+
+	if (!n || !n->deco || !n->decomapped || n->leaf)
+		return;
+	if (!(k = nodecount(n, 1)))
+		return;
+	vis = nodeshown(n);
+	for (i = 0, ch = n->first; ch; ch = ch->next) {
+		if (!ch->present)
+			continue;
+		decocell(n, i, k, &cx, &cy, &cw, &chh);
+		if (cw < 1 || chh < 1) {
+			i++;
+			continue;
+		}
+		c = ch->leaf ? ch->c : NULL;
+		schemeidx = nodeurgent(ch) ? SchemeUrg : ch == vis ? SchemeSel : SchemeNorm;
+		drw_setscheme(drw, scheme[schemeidx]);
+		drw_rect(drw, 0, 0, cw, chh, 1, 1);
+		if (n->layout == Tabbed && i > 0) {
+			drw_setscheme(drw, scheme[SchemeSeparator]);
+			drw_rect(drw, 0, 0, 1, chh, 1, 0);
+		} else if (n->layout == Stacked && i > 0) {
+			drw_setscheme(drw, scheme[SchemeSeparator]);
+			drw_rect(drw, 0, 0, cw, 1, 1, 0);
+		}
+		nodelabel(ch, label, sizeof label);
+		truncatechars(label, raw, sizeof raw, 64);
+		narrow = !c || !c->icon || cw < 6 + ICONSIZE + icongap + 2 + 6;
+		textx = narrow ? 6 : 6 + ICONSIZE + icongap;
+		avail = cw - textx - 6;
+		if (avail < 1)
+			title[0] = '\0';
+		else if (textwidth(raw) > avail)
+			truncatepx(raw, title, sizeof title, avail);
 		else
-			place(c, x, pos, w, sz);
-		pos += sz + gappx;
+			snprintf(title, sizeof title, "%s", raw);
+		if (!narrow)
+			drw_icon(drw, 6, (chh - ICONSIZE) / 2, c->icon,
+				&scheme[schemeidx][ColBg]);
+		if ((textw = textwidth(title))) {
+			drw_setscheme(drw, scheme[schemeidx]);
+			drw_text(drw, textx, 0, textw, chh, 0, title, 0);
+		}
+		XCopyArea(dpy, drw->drawable, n->deco, drw->gc, 0, 0, cw, chh, cx, cy);
+		i++;
 	}
-	return c;
+	XSync(dpy, False);
 }
 
-/* splith: master column left, stack right. */
-void
-tile(Monitor *m)
+/* The child whose cell in n's strip holds x,y (strip coordinates). */
+static Node *
+decochild(Node *n, int x, int y)
 {
-	unsigned int n, nm, ns;
-	int half = gappx / 2, mw = 0, sx, stw;
-	int wx = m->wx + gappo, wy = m->wy + gappo;
-	int ww = m->ww - 2 * gappo, wh = m->wh - 2 * gappo;
-	float f = MFACT(m);
-	Client *c;
+	Node *ch;
+	int k = nodecount(n, 1), i = 0, cx, cy, cw, chh;
 
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++);
-	if (n == 0 || ww < 1 || wh < 1)
-		return;
-	nm = MIN(n, (unsigned int)NMASTER(m));
-	ns = n - nm;
-
-	if (nm && ns) {
-		mw = (int)(ww * f) - half;
-		sx = wx + (int)(ww * f) + half;
-		stw = ww - (int)(ww * f) - half;
-	} else {
-		sx = wx;
-		stw = ww;
-		if (nm)
-			mw = ww;
+	for (ch = n->first; ch; ch = ch->next) {
+		if (!ch->present)
+			continue;
+		decocell(n, i++, k, &cx, &cy, &cw, &chh);
+		if (x >= cx && x < cx + cw && y >= cy && y < cy + chh)
+			return ch;
 	}
-	c = splitarea(nexttiled(m->clients), nm, wx, wy, mw, wh, 0);
-	splitarea(c, ns, sx, wy, stw, wh, 0);
+	return NULL;
 }
 
-/* splitv: master row on top, stack below. */
-void
-tilev(Monitor *m)
+/* The container whose title strip is w, in the shown workspaces. */
+Node *
+wintodeco(Window w, Monitor **mp)
 {
-	unsigned int n, nm, ns;
-	int half = gappx / 2, mh = 0, sy, sth;
-	int wx = m->wx + gappo, wy = m->wy + gappo;
-	int ww = m->ww - 2 * gappo, wh = m->wh - 2 * gappo;
-	float f = MFACT(m);
-	Client *c;
+	Monitor *m;
+	Node *n;
 
-	for (n = 0, c = nexttiled(m->clients); c; c = nexttiled(c->next), n++);
-	if (n == 0 || ww < 1 || wh < 1)
+	if (!w)
+		return NULL;
+	for (m = mons; m; m = m->next)
+		for (n = TREE(m); n; n = nodewalk(n))
+			if (n->deco == w) {
+				if (mp)
+					*mp = m;
+				return n;
+			}
+	return NULL;
+}
+
+/* Point the focus path of the shown tree at c. */
+void
+treefocus(Client *c)
+{
+	Node *n;
+
+	if (cleaningup || !c->mon || c->isfloating || !(n = leafof(TREE(c->mon), c)))
 		return;
-	nm = MIN(n, (unsigned int)NMASTER(m));
-	ns = n - nm;
+	for (; n->parent; n = n->parent)
+		n->parent->focus = n;
+}
 
-	if (nm && ns) {
-		mh = (int)(wh * f) - half;
-		sy = wy + (int)(wh * f) + half;
-		sth = wh - (int)(wh * f) - half;
+/* c is going away or to another monitor: drop it from every tree. */
+void
+treeforget(Client *c)
+{
+	Monitor *m;
+	Node *n;
+	unsigned int i;
+
+	for (m = mons; m; m = m->next)
+		for (i = 0; i < MAXTASKS * NTAGS; i++)
+			while (m->trees[i] && (n = leafof(m->trees[i], c)))
+				noderemove(n);
+}
+
+/* Swap two tiled windows of the shown workspace (drag to reposition). */
+void
+treeswap(Monitor *m, Client *a, Client *b)
+{
+	Node *la = leafof(TREE(m), a), *lb = leafof(TREE(m), b);
+
+	if (!la || !lb)
+		return;
+	la->c = b;
+	la->win = b->win;
+	lb->c = a;
+	lb->win = a->win;
+	swapclients(m, a, b);
+	treefocus(selmon->sel);
+	arrange(m);
+}
+
+/* i3 "move <dir>" of a tiled window. In a container laid out along dir it
+ * trades places with its neighbour, or enters the neighbouring container;
+ * at the edge it leaves its container for the nearest ancestor laid out
+ * along dir. Without one the workspace becomes split along dir. */
+void
+treemove(Client *c, int dir)
+{
+	Monitor *m = c->mon;
+	Node *root = TREE(m), *l = leafof(root, c), *p, *s, *t, *n, *k;
+	int fwd = dir == DirRight || dir == DirDown, horiz = dirhoriz(dir);
+
+	if (!l)
+		return;
+	p = l->parent;
+	if (nodehoriz(p) == horiz && (s = nodepresentsibling(l, fwd))) {
+		nodeunlink(l);
+		if (s->leaf) {
+			if (fwd)
+				nodeinsert(p, l, s);
+			else
+				nodeinsertbefore(p, l, s);
+		} else {
+			/* into the container: next to its window nearest to us
+			 * along dir, else its focused one */
+			for (t = s; !t->leaf; ) {
+				if (nodehoriz(t) == horiz) {
+					n = NULL;
+					for (k = t->first; k; k = k->next)
+						if (k->present && (!fwd || !n)) {
+							n = k;
+							if (fwd)
+								break;
+						}
+					t = n ? n : t->first;
+				} else
+					t = nodeshown(t) ? nodeshown(t) : t->first;
+			}
+			l->fact = nodemeanfact(t->parent);
+			if (nodehoriz(t->parent) == horiz && fwd)
+				nodeinsertbefore(t->parent, l, t);
+			else
+				nodeinsert(t->parent, l, t);
+			nodeprune(p);
+		}
 	} else {
-		sy = wy;
-		sth = wh;
-		if (nm)
-			mh = wh;
+		for (n = p; n->parent && nodehoriz(n->parent) != horiz; n = n->parent);
+		if (n->parent) {
+			k = n->parent;
+			nodeunlink(l);
+			l->fact = nodemeanfact(k);
+			if (fwd)
+				nodeinsert(k, l, n);
+			else
+				nodeinsertbefore(k, l, n);
+			nodeprune(p);
+		} else {
+			/* n is the root, laid out across dir */
+			if (p == root && !root->first->next)
+				return;
+			nodeunlink(l);
+			nodeprune(p);
+			k = nodenew(0);
+			k->layout = root->layout;
+			k->lastsplit = root->lastsplit;
+			while ((t = root->first)) {
+				nodeunlink(t);
+				nodeinsert(k, t, NULL);
+			}
+			k->focus = k->first;
+			root->layout = root->lastsplit = horiz ? SplitH : SplitV;
+			l->fact = 1.0;
+			if (fwd) {
+				nodeinsert(root, k, NULL);
+				nodeinsert(root, l, NULL);
+			} else {
+				nodeinsert(root, l, NULL);
+				nodeinsert(root, k, NULL);
+			}
+		}
 	}
-	c = splitarea(nexttiled(m->clients), nm, wx, wy, ww, mh, 1);
-	splitarea(c, ns, wx, sy, ww, sth, 1);
+	treefocus(c);
+	arrange(m);
+}
+
+/* i3 "split h/v" (arg->i: SplitH or SplitV): the next window opens next
+ * to the focused one along that direction. A window alone in a split
+ * container only changes the container's direction; otherwise it gets a
+ * container of its own. */
+void
+split(const Arg *arg)
+{
+	Client *c = selmon->sel;
+	Node *l, *p, *k;
+
+	if (!c || c->isfloating || !(l = leafof(TREE(selmon), c)))
+		return;
+	p = l->parent;
+	if (nodecount(p, 0) == 1 && (p->layout == SplitH || p->layout == SplitV)) {
+		p->layout = p->lastsplit = arg->i;
+	} else {
+		k = nodenew(0);
+		k->layout = k->lastsplit = arg->i;
+		k->fact = l->fact;
+		nodeinsertbefore(p, k, l);
+		nodeunlink(l);
+		l->fact = 1.0;
+		nodeinsert(k, l, NULL);
+	}
+	treefocus(c);
+	arrange(selmon);
+}
+
+/* The container that "layout ..." changes: the focused window's, or the
+ * workspace when nothing tiled has the focus. */
+static Node *
+layouttarget(void)
+{
+	Node *l;
+
+	if (selmon->sel && !selmon->sel->isfloating
+	&& (l = leafof(TREE(selmon), selmon->sel)))
+		return l->parent;
+	return TREE(selmon);
+}
+
+/* i3 "layout stacking/tabbed/splith/splitv" (arg->i). */
+void
+containerlayout(const Arg *arg)
+{
+	Node *p = layouttarget();
+
+	p->layout = arg->i;
+	if (arg->i == SplitH || arg->i == SplitV)
+		p->lastsplit = arg->i;
+	arrange(selmon);
+}
+
+/* i3 "layout toggle split": splith <-> splitv; stacked or tabbed go back
+ * to the split they had. */
+void
+togglesplit(const Arg *arg)
+{
+	Node *p = layouttarget();
+
+	(void)arg;
+	if (p->layout == SplitH || p->layout == SplitV)
+		p->layout = p->layout == SplitH ? SplitV : SplitH;
+	else
+		p->layout = p->lastsplit;
+	p->lastsplit = p->layout;
+	arrange(selmon);
+}
+
+/* _DWM_TREE: every non-empty workspace tree, so a restart (or a crash)
+ * keeps the containers. Per tree: monitor, task x tag slot, node count,
+ * then the nodes in preorder, TREENODE longs each: kind (0 leaf, else
+ * 1 + layout + 4 * lastsplit), children, fact * 1000, and the window of a
+ * leaf or the index of the focused child of a container. */
+static int
+savetrees(void)
+{
+	static long *prev;
+	static size_t prevn;
+	long *buf = NULL;
+	size_t n = 2, cap = 0, head;
+	Monitor *m;
+	Node *t, *ch;
+	unsigned int i;
+	long count = 0, nodes, fi;
+
+#define PUSH(V) do { if (n >= cap) { cap = cap ? cap * 2 : 256; \
+	buf = erealloc(buf, cap * sizeof *buf); } buf[n++] = (V); } while (0)
+	cap = 256;
+	buf = ecalloc(cap, sizeof *buf);
+	for (m = mons; m; m = m->next)
+		for (i = 0; i < ntasks * NTAGS; i++) {
+			t = m->trees[i];
+			if (!t->first && t->layout == defaultlayout)
+				continue;
+			PUSH(m->num);
+			PUSH((long)i);
+			head = n;
+			PUSH(0);
+			for (nodes = 0; t; t = nodewalk(t), nodes++) {
+				PUSH(t->leaf ? 0 : 1 + t->layout + 4 * t->lastsplit);
+				PUSH(nodecount(t, 0));
+				PUSH((long)(t->fact * 1000 + 0.5));
+				if (t->leaf)
+					fi = (long)(t->c ? t->c->win : t->win);
+				else
+					for (fi = -1, ch = t->first; ch; ch = ch->next)
+						if (fi++, ch == t->focus)
+							break;
+				if (!t->leaf && !t->focus)
+					fi = -1;
+				PUSH(fi);
+			}
+			buf[head] = nodes;
+			count++;
+		}
+#undef PUSH
+	buf[0] = TREEMAGIC;
+	buf[1] = count;
+	if (n != prevn || memcmp(buf, prev, n * sizeof *buf)) {
+		XChangeProperty(dpy, root, dwmatom[DwmTree], XA_CARDINAL, 32,
+			PropModeReplace, (unsigned char *)buf, n);
+		free(prev);
+		prev = buf;
+		prevn = n;
+		return 1;
+	}
+	free(buf);
+	return 0;
+}
+
+static Node *
+treeparse(const long *v, unsigned long n, unsigned long *k, long *left, int depth)
+{
+	Node *node, *ch;
+	long kind, nch, fact, x, i;
+
+	if (*left <= 0 || *k + TREENODE > n || depth > 64)
+		return NULL;
+	kind = v[*k];
+	nch = v[*k + 1];
+	fact = v[*k + 2];
+	x = v[*k + 3];
+	*k += TREENODE;
+	(*left)--;
+	node = nodenew(kind == 0);
+	node->fact = fact >= 10 && fact <= 100000 ? fact / 1000.0 : 1.0;
+	if (node->leaf) {
+		node->win = (Window)x;
+		return node;
+	}
+	node->layout = (kind - 1) & 3;
+	node->lastsplit = ((kind - 1) >> 2) == SplitV ? SplitV : SplitH;
+	for (i = 0; i < nch; i++) {
+		if (!(ch = treeparse(v, n, k, left, depth + 1)))
+			break;
+		nodeinsert(node, ch, NULL);
+		if (i == x)
+			node->focus = ch;
+	}
+	return node;
+}
+
+/* Rebuild the trees from _DWM_TREE; their leaves get their clients as
+ * scan() adopts the windows (treesync()). */
+void
+loadtrees(void)
+{
+	Atom type;
+	int format;
+	unsigned long n, after, k = 2;
+	unsigned char *p = NULL;
+	long *v, count, e, nodes, idx;
+	Monitor *m;
+	Node *t;
+
+	if (XGetWindowProperty(dpy, root, dwmatom[DwmTree], 0, 1 << 22, False,
+		XA_CARDINAL, &type, &format, &n, &after, &p) != Success || !p)
+		return;
+	v = (long *)p;
+	if (type != XA_CARDINAL || format != 32 || n < 2 || v[0] != TREEMAGIC) {
+		XFree(p);
+		return;
+	}
+	count = v[1];
+	for (e = 0; e < count && k + 3 <= n; e++) {
+		for (m = mons; m && m->num != v[k]; m = m->next);
+		idx = v[k + 1];
+		nodes = v[k + 2];
+		k += 3;
+		if (nodes < 1 || k + nodes * TREENODE > n)
+			break;
+		if (!m || idx < 0 || idx >= ntasks * NTAGS || v[k] == 0) {
+			k += nodes * TREENODE;
+			continue;
+		}
+		if ((t = treeparse(v, n, &k, &nodes, 0))) {
+			nodefree(m->trees[idx]);
+			m->trees[idx] = t;
+		}
+		k += nodes * TREENODE; /* whatever the parser did not take */
+	}
+	XFree(p);
 }
 
 void
@@ -4701,13 +5313,8 @@ togglefloating(const Arg *arg)
 	if (selmon->sel->isfullscreen) /* no support for fullscreen windows */
 		return;
 	selmon->sel->isfloating = !selmon->sel->isfloating || selmon->sel->isfixed;
-	if (selmon->sel->isfloating) {
-		if (curlayout(selmon)->arrange)
-			floatnatural(selmon->sel);
-		else
-			resize(selmon->sel, selmon->sel->x, selmon->sel->y,
-				selmon->sel->w, selmon->sel->h, 0);
-	}
+	if (selmon->sel->isfloating)
+		floatnatural(selmon->sel);
 	arrange(selmon);
 }
 
@@ -4716,15 +5323,6 @@ togglefullscr(const Arg *arg)
 {
 	if (selmon->sel)
 		setfullscreen(selmon->sel, !selmon->sel->isfullscreen);
-}
-
-void
-togglesplit(const Arg *arg)
-{
-	Arg a;
-
-	a.v = curlayout(selmon)->arrange == tile ? &layouts[1] : &layouts[0];
-	setlayout(&a);
 }
 
 void
@@ -4747,10 +5345,9 @@ unmanage(Client *c, int destroyed)
 	Monitor *m = c->mon;
 	Window frame = c->frame;
 
+	treeforget(c);
 	detach(c);
 	detachstack(c);
-	if (m->tabsel == c)
-		m->tabsel = NULL;
 	if (m->sel == c)
 		m->sel = NULL;
 	if (!destroyed) {
@@ -5146,7 +5743,7 @@ updatetitle(Client *c)
 		strcpy(c->name, broken);
 	c->taskcap = -1;
 	if (c->title)
-		drawtitle(c, c == selmon->sel);
+		drawclienttitles(c);
 }
 
 void
@@ -5326,7 +5923,6 @@ switchtask(int t)
 			attachstack(c);
 		}
 		m->sel = c;
-		snprintf(m->ltsymbol, sizeof m->ltsymbol, "%s", curlayout(m)->symbol);
 	}
 	arrange(NULL);
 	focus(selmon->sel);
@@ -5385,10 +5981,10 @@ taskinsert(int pos)
 			(ntasks - pos) * sizeof *m->taskview);
 		memset(&m->taskview[pos], 0, sizeof m->taskview[pos]);
 		m->taskview[pos].tagset[0] = m->taskview[pos].tagset[1] = 1;
-		memmove(m->lt + (from + NTAGS) * 2, m->lt + from * 2, cnt * 2 * sizeof *m->lt);
-		memmove(m->sellt + from + NTAGS, m->sellt + from, cnt * sizeof *m->sellt);
-		memmove(m->mfacts + from + NTAGS, m->mfacts + from, cnt * sizeof *m->mfacts);
-		memmove(m->nmasters + from + NTAGS, m->nmasters + from, cnt * sizeof *m->nmasters);
+		/* the slots past the last task hold empty trees */
+		for (i = 0; i < NTAGS; i++)
+			nodefree(m->trees[ntasks * NTAGS + i]);
+		memmove(m->trees + from + NTAGS, m->trees + from, cnt * sizeof *m->trees);
 		for (i = 0; i < NTAGS; i++)
 			initpertag(m, from + i);
 		for (c = m->clients; c; c = c->next)
@@ -5415,10 +6011,9 @@ taskremove(int pos)
 	for (m = mons; m; m = m->next) {
 		memmove(m->taskview + pos, m->taskview + pos + 1,
 			(ntasks - pos - 1) * sizeof *m->taskview);
-		memmove(m->lt + from * 2, m->lt + (from + NTAGS) * 2, cnt * 2 * sizeof *m->lt);
-		memmove(m->sellt + from, m->sellt + from + NTAGS, cnt * sizeof *m->sellt);
-		memmove(m->mfacts + from, m->mfacts + from + NTAGS, cnt * sizeof *m->mfacts);
-		memmove(m->nmasters + from, m->nmasters + from + NTAGS, cnt * sizeof *m->nmasters);
+		for (i = 0; i < NTAGS; i++)
+			nodefree(m->trees[from + i]);
+		memmove(m->trees + from, m->trees + from + NTAGS, cnt * sizeof *m->trees);
 		for (i = 0; i < NTAGS; i++)
 			initpertag(m, (ntasks - 1) * NTAGS + i);
 		memset(&m->taskview[ntasks - 1], 0, sizeof m->taskview[ntasks - 1]);
@@ -5655,6 +6250,8 @@ wintomon(Window w)
 			return m;
 	if ((c = wintoclient(w)))
 		return c->mon;
+	if (wintodeco(w, &m))
+		return m;
 	return selmon;
 }
 
@@ -5710,17 +6307,6 @@ systraytomon(Monitor *m) {
 	return t;
 }
 
-void
-zoom(const Arg *arg)
-{
-	Client *c = selmon->sel;
-
-	if (!curlayout(selmon)->arrange || !c || c->isfloating)
-		return;
-	if (c == nexttiled(selmon->clients) && !(c = nexttiled(c->next)))
-		return;
-	pop(c);
-}
 
 int
 main(int argc, char *argv[])

@@ -73,23 +73,13 @@ static const Rule rules[] = {
 	{ "Gnome-keyring-prompt",  NULL,       NULL,     0,          1,           -1 },
 };
 
-/* layout(s) */
-static const float mfact     = 0.55; /* factor of master area size [0.05..0.95] */
-static const int nmaster     = 1;    /* number of clients in master area */
+/* layout: every workspace (task x tag) has an i3 container tree */
+static const int defaultlayout = SplitH; /* i3 default_orientation horizontal: SplitH, SplitV, Stacked or Tabbed */
 static const int resizehints = 0;    /* 0 = exact tiling cells (consistent gaps) */
 static const int lockfullscreen = 1; /* 1 will force focus on the fullscreen window */
 static const int refreshrate = 120;  /* refresh rate (per second) for client move/resize */
 static const int autobackandforth = 0; /* 1: Mod+N on the current tag goes back (i3 workspace_auto_back_and_forth) */
 static const int taskbackandforth = 1; /* 1: Mod+Ctrl+N on the active task goes back to the previous task */
-
-static const Layout layouts[] = {
-	/* symbol     arrange function */
-	{ "[]=",      tile },    /* splith: master left, stack right (i3 default) */
-	{ "[v]",      tilev },   /* splitv: master top, stack bottom */
-	{ "[S]",      monocle }, /* stacking (without i3 title bars) */
-	{ "[T]",      tabbed },  /* tabbed (shared tab bar) */
-	{ "><>",      NULL },    /* floating */
-};
 
 
 /* key definitions */
@@ -135,14 +125,14 @@ static const Key keys[] = {
 	{ MODKEY|ShiftMask,             XK_Down,   movedir,        {.i = DirDown } },
 	{ MODKEY|ShiftMask,             XK_Up,     movedir,        {.i = DirUp } },
 	{ MODKEY|ShiftMask,             XK_Right,  movedir,        {.i = DirRight } },
-	/* i3: $mod+h / $mod+v split horizontal / vertical */
-	{ MODKEY,                       XK_h,      setlayout,      {.v = &layouts[0]} },
-	{ MODKEY,                       XK_v,      setlayout,      {.v = &layouts[1]} },
+	/* i3: $mod+h / $mod+v split h / split v */
+	{ MODKEY,                       XK_h,      split,          {.i = SplitH } },
+	{ MODKEY,                       XK_v,      split,          {.i = SplitV } },
 	/* i3: $mod+Shift+f fullscreen toggle */
 	{ MODKEY|ShiftMask,             XK_f,      togglefullscr,  {0} },
 	/* i3: $mod+s / $mod+w / $mod+e layout stacking / tabbed / toggle split */
-	{ MODKEY,                       XK_s,      setlayout,      {.v = &layouts[2]} },
-	{ MODKEY,                       XK_w,      setlayout,      {.v = &layouts[3]} },
+	{ MODKEY,                       XK_s,      containerlayout, {.i = Stacked } },
+	{ MODKEY,                       XK_w,      containerlayout, {.i = Tabbed } },
 	{ MODKEY,                       XK_e,      togglesplit,    {0} },
 	/* i3: $mod+space floating toggle */
 	{ MODKEY,                       XK_space,  togglefloating, {0} },
@@ -219,7 +209,6 @@ static const Button buttons[] = {
 	{ ClkTaskCell,          0,              Button3,        renametask,     {0} },
 	{ ClkTagBar,            0,              Button1,        view,           {0} },
 	{ ClkTaskBar,           0,              Button1,        focustask,      {0} },
-	{ ClkTaskBar,           MODKEY,         Button2,        zoom,           {0} },
 	{ ClkStatusText,        0,              Button1,        spawn,          {.v = calendarcmd } },
 	{ ClkBorder,           0,              Button3,        resizemouse,    {0} },
 	{ ClkBorder,           MODKEY,         Button1,        movemouse,      {0} },

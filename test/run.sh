@@ -144,7 +144,8 @@ if [ "${TEST_TABS:-0}" = 1 ]; then
 	import -window root /out/tabs-before.png
 	A=$(xdotool getactivewindow)
 	FP=$(/tmp/parent "$A")
-	TITLE=$(xwininfo -id "$FP" -tree | grep -oE '0x[0-9a-f]+' | tail -1)
+	# the container's title strip (one cell per tab)
+	TITLE=$(xdotool search --name '^dwm-tabs$' | head -1)
 	TX=$(xwininfo -id "$TITLE" | awk '/Absolute upper-left X/ {print $4}')
 	TY=$(xwininfo -id "$TITLE" | awk '/Absolute upper-left Y/ {print $4}')
 	TW=$(xwininfo -id "$TITLE" | awk '/Width:/ {print $2}')
@@ -173,10 +174,10 @@ if [ "${TEST_TABS:-0}" = 1 ]; then
 	echo "after active=$A focus=$(xdotool getwindowfocus)" >>/out/tabs.txt
 	import -window root /out/tabs-middle.png
 	xwininfo -root -tree >/out/tabs-tree.txt 2>&1
-	# leave tabbed mode: all frames must map again and no stale notch property
-	xdotool key --clearmodifiers super+h
+	# leave tabbed mode (layout toggle split): all frames must map again
+	xdotool key --clearmodifiers super+e
 	sleep 0.4
-	xprop -id "$FP" _DWM_TAB >/out/tabs-exit-prop.txt 2>&1
+	xwininfo -id "$TITLE" | awk '/Map State/ {print "strip " $3}' >/out/tabs-exit-prop.txt 2>&1
 	import -window root /out/tabs-exit.png
 fi
 
@@ -313,11 +314,10 @@ if [ "${TEST_OUTLINE:-0}" = 1 ]; then
 	echo "restored map=$(xwininfo -id "$OUT" | awk '/Map State/ {print $3}')" \
 		>>/out/outline.txt
 
-	# Tabbed mode publishes _DWM_TAB and uses the notched bounding shape.
+	# Tabbed mode: the outline takes in the title strip, notched at the tab.
 	xdotool key --clearmodifiers super+w
 	sleep 0.4
 	echo "tabbed shape:" >>/out/outline.txt
-	xprop -id "$FP" _DWM_TAB >>/out/outline.txt
 	/tmp/inputshape "$OUT" >>/out/outline.txt
 	import -window root /out/outline-tabbed.png
 fi

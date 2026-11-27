@@ -16,6 +16,13 @@ export HOME=/tmp/ewmhhome
 rm -rf "$HOME"
 mkdir -p "$HOME/.local/share/icons/hicolor/32x32/apps"
 convert -size 32x32 'xc:#ff0000' "$HOME/.local/share/icons/hicolor/32x32/apps/themetest.png"
+# ... and an SVG-only one for "SvgTest" (blue square), rendered with nanosvg
+mkdir -p "$HOME/.local/share/icons/hicolor/scalable/apps"
+cat >"$HOME/.local/share/icons/hicolor/scalable/apps/svgtest.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
+  <rect x="0" y="0" width="48" height="48" rx="6" fill="#0000ff"/>
+</svg>
+SVG
 
 DISPLAY_NUM="${DISPLAY_NUM:-99}"
 export DISPLAY=":${DISPLAY_NUM}"
@@ -68,18 +75,29 @@ absy() { info "$1" "Absolute upper-left Y:"; }
 curdesk() { prop "$(xwininfo -root | awk '/Window id:/ {print $4}')" _NET_CURRENT_DESKTOP; }
 ROOT=$(xwininfo -root | awk '/Window id:/ {print $4}')
 
+# a mapped title strip of a stacked/tabbed container?
+tabstrip() {
+	for w in $(xdotool search --name '^dwm-tabs$' 2>/dev/null); do
+		xwininfo -id "$w" | grep -q IsViewable && { echo yes; return; }
+	done
+	echo no
+}
+
 # 1. _NET_FRAME_EXTENTS of a normal window: the 18px title bar
 A=$(spawn wa ClassA)
 check "frame extents" "0, 0, 18, 0" "$(prop "$A" _NET_FRAME_EXTENTS)"
 
-# 2. _MOTIF_WM_HINTS without decorations: no title bar, except as a tab
+# 2. _MOTIF_WM_HINTS without decorations: no title bar; as a tab, the
+#    container's title strip above it shows its title
 M=$(spawn wm ClassM -motif)
 check "motif: no title extents" "0, 0, 0, 0" "$(prop "$M" _NET_FRAME_EXTENTS)"
 check "motif: client at frame top" 0 "$(info "$M" "Relative upper-left Y:")"
 key super+w
-check "motif in tabbed: tab strip" "0, 0, 18, 0" "$(prop "$M" _NET_FRAME_EXTENTS)"
-key super+h
+check "motif in tabbed: still no title bar" "0, 0, 0, 0" "$(prop "$M" _NET_FRAME_EXTENTS)"
+check "motif in tabbed: title strip shown" yes "$(tabstrip)"
+key super+e
 check "motif back in splith" "0, 0, 0, 0" "$(prop "$M" _NET_FRAME_EXTENTS)"
+check "no title strip in splith" no "$(tabstrip)"
 
 # 3. ARGB client: the frame has its 32-bit depth
 R=$(spawn wr ClassR -argb)
@@ -173,7 +191,7 @@ for n in $(seq 1 40); do xdotool key --clearmodifiers super+Right; done
 sleep 0.5
 check "dwm alive with 40 tabs" yes "$(kill -0 $DWM_PID 2>/dev/null && echo yes || echo no)"
 check "40x Mod+Right cycles back" "$FIRST" "$(xdotool getactivewindow)"
-check "tab notch published" yes "$(xprop -id "$(parent "$FIRST")" _DWM_TAB 2>/dev/null | grep -q '=' && echo yes || echo no)"
+check "title strip with 40 tabs" yes "$(tabstrip)"
 
 # 12. icon from the icon theme (class ThemeTest -> themetest.png, red)
 key super+8
@@ -182,6 +200,14 @@ FR=$(parent "$T")
 FX=$(absx "$FR"); FY=$(absy "$FR")
 PIX=$(import -window root -crop 1x1+$((FX + 16))+$((FY + 9)) -depth 8 txt:- 2>/dev/null | sed -n 's/.*\(#[0-9A-Fa-f]\{6\}\).*/\1/p' | head -1)
 check "theme icon drawn in the title" "#FF0000" "$PIX"
+
+# 13. SVG icon from the icon theme (class SvgTest -> scalable svgtest.svg)
+key super+9
+SV=$(spawn ws SvgTest)
+FR=$(parent "$SV")
+FX=$(absx "$FR"); FY=$(absy "$FR")
+PIX=$(import -window root -crop 1x1+$((FX + 16))+$((FY + 9)) -depth 8 txt:- 2>/dev/null | sed -n 's/.*\(#[0-9A-Fa-f]\{6\}\).*/\1/p' | head -1)
+check "svg theme icon drawn in the title" "#0000FF" "$PIX"
 
 import -window root /out/ewmh-end.png 2>/dev/null || true
 cat /tmp/dwm.log >>"$OUT"

@@ -77,7 +77,8 @@ sleep 0.4
 geom tag2-again
 [ "$W" -eq "$TAB_W" ] || fail "tag 2 lost its layout: width $TAB_W -> $W"
 
-# Make tag 1 tabbed, then set tag 2 back to splith: neither change may leak.
+# Make tag 1 tabbed, then set tag 2 back to splith (layout toggle split):
+# neither change may leak.
 xdotool key --clearmodifiers super+1
 sleep 0.3
 xdotool key --clearmodifiers super+w
@@ -87,7 +88,7 @@ TAG1_TAB_W=$W
 [ "$TAG1_TAB_W" -gt "$((SPLIT_W * 3 / 2))" ] || fail "tag1 tabbed width $TAG1_TAB_W not full"
 xdotool key --clearmodifiers super+2
 sleep 0.3
-xdotool key --clearmodifiers super+h
+xdotool key --clearmodifiers super+e
 sleep 0.4
 geom tag2-splith
 [ "$W" -lt "$((TAG1_TAB_W * 3 / 4))" ] || fail "tag2 splith width $W not tiled"

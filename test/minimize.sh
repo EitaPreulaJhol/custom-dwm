@@ -134,7 +134,7 @@ check "tab one hidden" IsUnviewable "$(shown "$A")"
 check "another tab shown" IsViewable "$(shown "$(active)")"
 clickbar "$XA"
 check "tab one back and selected" "$A IsViewable $GT" "$(active) $(shown "$A") $(geom "$A")"
-key super+h
+key super+e
 
 # 6. clients and pagers: WM_CHANGE_STATE iconifies, _NET_ACTIVE_WINDOW and
 # _NET_WM_STATE remove restore

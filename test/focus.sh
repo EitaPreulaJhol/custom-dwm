@@ -105,7 +105,7 @@ check "tabbed: Mod+Right to D" D j
 DPID=$(echo $PIDS | awk '{print $NF}')
 xdotool key super+q; sleep 0.1; kill "$DPID" 2>/dev/null; sleep 0.5
 check "tabbed: closing D focuses A" A k
-key super+h
+key super+e
 
 # 4. A client that maps and withdraws right away must not leave a ghost
 #    frame that holds the focus.
