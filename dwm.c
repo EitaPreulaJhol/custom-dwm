@@ -389,6 +389,11 @@ static Node *wintodeco(Window w, Monitor **mp);
 static void loadtrees(void);
 static int savetrees(void);
 static void focusclient(Client *c);
+static void overview(const Arg *arg);
+static void ovclick(XButtonPressedEvent *ev);
+static void ovclose(void);
+static void ovdraw(void);
+static void ovkey(XEvent *e);
 static Node *decochild(Node *n, int x, int y);
 static void decoshow(Monitor *m, Node *n, int x, int y, int w, int h);
 static Node *nodefocusleaf(Node *n);
@@ -496,6 +501,10 @@ static int outlinemapped;
 static int outlinex, outliney, outlinew, outlineh;
 static int outlinetabvalid;
 static XRectangle outlinetab;
+/* task overview (overview()) */
+static Window ovwin;
+static int ovactive, ovtask, ovtag, ovx, ovy, ovw, ovh;
+static int ovlw, ovcw, ovicons; /* label column, cell width, icons per cell */
 
 /* configuration, allows nested code to access above variables */
 #include "config.h"
@@ -795,6 +804,13 @@ buttonpress(XEvent *e)
 	Node *n, *l;
 
 	click = ClkRootWin;
+	if (ovactive) {
+		if (ev->window == ovwin) {
+			ovclick(ev);
+			return;
+		}
+		ovclose();
+	}
 	if (renaming >= 0)
 		promptend(1);
 	/* focus monitor if necessary */
@@ -886,6 +902,9 @@ cleanup(void)
 		free(systray);
 	}
 
+	ovclose();
+	if (ovwin)
+		XDestroyWindow(dpy, ovwin);
 	if (outlinewin) {
 		XDestroyWindow(dpy, outlinewin);
 		outlinewin = None;
@@ -1959,6 +1978,7 @@ drawbars(void)
 
 	for (m = mons; m; m = m->next)
 		drawbar(m);
+	ovdraw();
 }
 
 void
@@ -1971,7 +1991,9 @@ expose(XEvent *e)
 
 	if (ev->count != 0)
 		return;
-	if ((c = wintoclient(ev->window)) && ev->window == c->title)
+	if (ovactive && ev->window == ovwin)
+		ovdraw();
+	else if ((c = wintoclient(ev->window)) && ev->window == c->title)
 		drawtitle(c, c == selmon->sel);
 	else if ((n = wintodeco(ev->window, NULL)))
 		drawdeco(n);
@@ -2415,6 +2437,10 @@ keypress(XEvent *e)
 	KeySym keysym;
 	XKeyEvent *ev;
 
+	if (ovactive) {
+		ovkey(e);
+		return;
+	}
 	if (renaming >= 0) {
 		promptkey(e);
 		return;
@@ -6348,6 +6374,268 @@ systraytomon(Monitor *m) {
 	return t;
 }
 
+/* ---- task overview ------------------------------------------------------
+ * A panel over the focused monitor with one row per task and one cell per
+ * tag showing the icons of its windows. Arrows (or j k l ;) move, Return
+ * or a click goes there, 1..0 go to that tag of the selected task, Escape
+ * or Mod+o closes it. */
+
+static const int ovpad = 8, ovgap = 4;
+
+static int
+ovrowh(void)
+{
+	return bh;
+}
+
+/* Fit the panel on m: as many icons per cell as there is room for. */
+static void
+ovgeometry(Monitor *m)
+{
+	char label[TASKNAMELEN], text[TASKNAMELEN + 4];
+	int t;
+
+	ovlw = 0;
+	for (t = 0; t < ntasks; t++) {
+		truncatechars(tasknames[t], label, sizeof label, 16);
+		snprintf(text, sizeof text, " %s ", label);
+		ovlw = MAX(ovlw, textwidth(text) + 8);
+	}
+	for (ovicons = 6; ; ovicons--) {
+		ovcw = textwidth(" 10 ") + ovicons * (ICONSIZE + 2) + textwidth("+99") + 6;
+		ovw = 2 * ovpad + ovlw + (int)NTAGS * ovcw;
+		if (ovw <= m->ww - 40 || ovicons == 1)
+			break;
+	}
+	ovh = 2 * ovpad + ntasks * ovrowh() + (ntasks - 1) * ovgap;
+	ovx = m->wx + (m->ww - ovw) / 2;
+	ovy = m->wy + (m->wh - ovh) / 2;
+}
+
+static void
+ovdrawframe(int x, int w, int h)
+{
+	drw_setscheme(drw, scheme[SchemeAccent]);
+	drw_rect(drw, x, 0, w, 1, 1, 0);
+	drw_rect(drw, x, h - 1, w, 1, 1, 0);
+	drw_rect(drw, x, 0, 1, h, 1, 0);
+	drw_rect(drw, x + w - 1, 0, 1, h, 1, 0);
+}
+
+static void
+ovdraw(void)
+{
+	Monitor *m;
+	Client *c;
+	char label[TASKNAMELEN], text[TASKNAMELEN + 8], letter[8];
+	int t, i, x, n, shown, cur, urg, occ, rh = ovrowh(), numw, lsch;
+	unsigned int bit;
+
+	if (!ovactive)
+		return;
+	XClearWindow(dpy, ovwin);
+	for (t = 0; t < ntasks; t++) {
+		drw_setscheme(drw, scheme[SchemeNorm]);
+		drw_rect(drw, 0, 0, ovw, rh, 1, 1);
+		/* task label */
+		for (urg = 0, m = mons; m; m = m->next)
+			for (c = m->clients; c; c = c->next)
+				urg |= c->task == t && c->isurgent;
+		truncatechars(tasknames[t], label, sizeof label, 16);
+		snprintf(text, sizeof text, " %s ", label);
+		lsch = urg ? SchemeTaskUrg : t == seltask ? SchemeTaskSel : SchemeTask;
+		drw_setscheme(drw, scheme[lsch]);
+		drw_rect(drw, ovpad, 0, ovlw - 8, rh, 1, 1);
+		drw_text(drw, ovpad, 0, ovlw - 8, rh, 0, text, 0);
+		/* tag cells */
+		for (i = 0; i < (int)NTAGS; i++) {
+			bit = 1u << i;
+			x = ovpad + ovlw + i * ovcw;
+			n = urg = 0;
+			for (m = mons; m; m = m->next)
+				for (c = m->clients; c; c = c->next)
+					if (c->task == t && (c->tags & bit) && (c->tags & TAGMASK) != TAGMASK) {
+						n++;
+						urg |= c->isurgent;
+					}
+			occ = n > 0;
+			cur = t == seltask && (selmon->tagset[selmon->seltags] & bit);
+			if (t == ovtask && i == ovtag) {
+				drw_setscheme(drw, scheme[SchemeSel]);
+				drw_rect(drw, x, 0, ovcw - 2, rh, 1, 1);
+			} else if (urg) {
+				drw_setscheme(drw, scheme[SchemeUrg]);
+				drw_rect(drw, x, 0, ovcw - 2, rh, 1, 1);
+			}
+			snprintf(text, sizeof text, " %s ", tags[i]);
+			numw = textwidth(text);
+			drw_setscheme(drw, scheme[t == ovtask && i == ovtag ? SchemeSel
+				: urg ? SchemeUrg : occ ? SchemeTagOcc : SchemeTagEmpty]);
+			drw_text(drw, x + 1, 0, numw, rh, 0, text, 0);
+			shown = 0;
+			for (m = mons; m && shown <= ovicons; m = m->next)
+				for (c = m->clients; c && shown <= ovicons; c = c->next) {
+					if (c->task != t || !(c->tags & bit) || (c->tags & TAGMASK) == TAGMASK)
+						continue;
+					if (shown == ovicons) {
+						shown++;
+						break;
+					}
+					if (c->icon)
+						drw_icon(drw, x + 1 + numw + shown * (ICONSIZE + 2),
+							(rh - ICONSIZE) / 2, c->icon,
+							&scheme[t == ovtask && i == ovtag ? SchemeSel
+							: urg ? SchemeUrg : SchemeNorm][ColBg]);
+					else {
+						/* no icon: the first letter of the class */
+						snprintf(letter, sizeof letter, "%c",
+							c->class[0] ? c->class[0] : '?');
+						drw_text(drw, x + 1 + numw + shown * (ICONSIZE + 2),
+							0, ICONSIZE, rh, 4, letter, 0);
+					}
+					shown++;
+				}
+			if (n > ovicons) {
+				snprintf(text, sizeof text, "+%d", n - ovicons);
+				drw_setscheme(drw, scheme[SchemeIcon]);
+				drw_text(drw, x + 1 + numw + ovicons * (ICONSIZE + 2), 0,
+					textwidth(text), rh, 0, text, 0);
+			}
+			if (cur)
+				ovdrawframe(x, ovcw - 2, rh);
+		}
+		XCopyArea(dpy, drw->drawable, ovwin, drw->gc, 0, 0, ovw, rh,
+			0, ovpad + t * (rh + ovgap));
+	}
+	XSync(dpy, False);
+}
+
+static void
+ovclose(void)
+{
+	if (!ovactive)
+		return;
+	ovactive = 0;
+	XUnmapWindow(dpy, ovwin);
+	XUngrabKeyboard(dpy, CurrentTime);
+	XSync(dpy, False);
+}
+
+/* Show tag `tag` of task `task` and close the overview. */
+static void
+ovgo(int task, int tag)
+{
+	Arg a;
+
+	ovclose();
+	if (task < 0 || task >= ntasks || tag < 0 || tag >= (int)NTAGS)
+		return;
+	switchtask(task);
+	if (selmon->tagset[selmon->seltags] != (1u << tag)) {
+		a.ui = 1u << tag;
+		view(&a);
+	}
+}
+
+void
+overview(const Arg *arg)
+{
+	XSetWindowAttributes wa;
+	int i;
+
+	(void)arg;
+	if (ovactive) {
+		ovclose();
+		return;
+	}
+	if (renaming >= 0)
+		promptend(0);
+	if (wmmode != ModeNormal)
+		setmode(&(Arg){ .i = wmmode });
+	ovgeometry(selmon);
+	if (!ovwin) {
+		wa.override_redirect = True;
+		wa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
+		wa.border_pixel = scheme[SchemeAccent][ColFg].pixel;
+		wa.event_mask = ButtonPressMask|ExposureMask;
+		ovwin = XCreateWindow(dpy, root, ovx, ovy, ovw, ovh, 1,
+			DefaultDepth(dpy, screen), CopyFromParent, DefaultVisual(dpy, screen),
+			CWOverrideRedirect|CWBackPixel|CWBorderPixel|CWEventMask, &wa);
+		XDefineCursor(dpy, ovwin, cursor[CurNormal]->cursor);
+		XStoreName(dpy, ovwin, "dwm-overview");
+	} else
+		XMoveResizeWindow(dpy, ovwin, ovx, ovy, ovw, ovh);
+	/* the key that opened it may still be held: retry briefly */
+	for (i = 0; i < 200; i++) {
+		if (XGrabKeyboard(dpy, root, False, GrabModeAsync, GrabModeAsync,
+			CurrentTime) == GrabSuccess)
+			break;
+		usleep(1000);
+	}
+	if (i == 200)
+		return;
+	ovtask = seltask;
+	ovtag = (int)curtag(selmon);
+	ovactive = 1;
+	XMapRaised(dpy, ovwin);
+	ovdraw();
+}
+
+static void
+ovkey(XEvent *e)
+{
+	KeySym ks = XKeycodeToKeysym(dpy, (KeyCode)e->xkey.keycode, 0);
+	unsigned int mods = CLEANMASK(e->xkey.state) & ~ShiftMask;
+
+	/* with a modifier only Mod+o (close) means something here */
+	if (mods && !(ks == XK_o && mods == MODKEY))
+		return;
+	switch (ks) {
+	case XK_Escape:
+		ovclose();
+		return;
+	case XK_o:
+		if (mods == MODKEY)
+			ovclose();
+		return;
+	case XK_Return: case XK_KP_Enter: case XK_space:
+		ovgo(ovtask, ovtag);
+		return;
+	case XK_Left: case XK_j:
+		ovtag = (ovtag + NTAGS - 1) % NTAGS;
+		break;
+	case XK_Right: case XK_semicolon:
+		ovtag = (ovtag + 1) % NTAGS;
+		break;
+	case XK_Up: case XK_l:
+		ovtask = (ovtask + ntasks - 1) % ntasks;
+		break;
+	case XK_Down: case XK_k: case XK_Tab:
+		ovtask = (ovtask + 1) % ntasks;
+		break;
+	default:
+		if (ks >= XK_1 && ks <= XK_9)
+			ovgo(ovtask, (int)(ks - XK_1));
+		else if (ks == XK_0)
+			ovgo(ovtask, 9);
+		return;
+	}
+	ovdraw();
+}
+
+/* A click in the panel: go to the cell under it. */
+static void
+ovclick(XButtonPressedEvent *ev)
+{
+	int rh = ovrowh(), t, i;
+
+	t = (ev->y - ovpad) / (rh + ovgap);
+	i = (ev->x - ovpad - ovlw) / ovcw;
+	if (ev->y < ovpad || ev->x < ovpad + ovlw || t < 0 || t >= ntasks
+	|| i < 0 || i >= (int)NTAGS || (ev->y - ovpad) % (rh + ovgap) >= rh)
+		return;
+	ovgo(t, i);
+}
 
 int
 main(int argc, char *argv[])

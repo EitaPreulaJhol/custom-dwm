@@ -188,6 +188,8 @@ static const Key keys[] = {
 	{ MODKEY,                       XK_Next,   cycletask,      {.i = +1 } },
 	{ MODKEY,                       XK_grave,  lasttask,       {0} },
 	{ MODKEY,                       XK_n,      newtask,        {0} },
+	/* overview of every task and its tags */
+	{ MODKEY,                       XK_o,      overview,       {0} },
 	{ MODKEY|ShiftMask,             XK_n,      renametask,     {.i = -1 } },
 	{ MODKEY|ShiftMask,             XK_Delete, deltask,        {0} },
 	/* i3: $mod+Tab workspace back_and_forth */
