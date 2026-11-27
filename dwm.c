@@ -2290,26 +2290,31 @@ focusstack(const Arg *arg)
 	}
 }
 
-/* Put c back at the size/position the client requested when it was mapped,
- * like i3's floating_enable(): the tiled cell is usually larger than
- * floating_maximum_size, so keeping it left no room to grow in resize mode. */
+/* Put c back at the size the client requested when it was mapped, like i3's
+ * floating_enable(): the tiled cell is usually larger than
+ * floating_maximum_size, so keeping it left no room to grow in resize mode.
+ * The window is centered on its monitor's work area rather than put back at
+ * the position it asked for. */
 void
 floatnatural(Client *c)
 {
 	Monitor *m = c->mon;
-	int x = c->natx, y = c->naty, w = c->natw, h = c->nath;
+	int x, y, w = c->natw, h = c->nath;
 
-	if (w <= 0 || h <= 0)
-		return;
-	w = MIN(w, floatmaxw);
-	h = MIN(h, floatmaxh);
-	if (x + w > m->wx + m->ww)
-		x = m->wx + m->ww - w;
-	if (y + h > m->wy + m->wh)
-		y = m->wy + m->wh - h;
-	x = MAX(x, m->wx);
-	y = MAX(y, m->wy);
+	if (w <= 0 || h <= 0) {
+		w = c->w;
+		h = c->h;
+	}
+	w = MIN(MIN(w, floatmaxw), m->ww);
+	h = MIN(MIN(h, floatmaxh), m->wh);
+	x = m->wx + (m->ww - w) / 2;
+	y = m->wy + (m->wh - h) / 2;
 	resize(c, x, y, w, h, 0);
+	/* resize() applies the size hints: re-center at the final size */
+	x = m->wx + (m->ww - c->w) / 2;
+	y = m->wy + (m->wh - c->h) / 2;
+	if (x != c->x || y != c->y)
+		resize(c, x, y, c->w, c->h, 0);
 }
 
 /* Center c on its monitor's work area. Windows that do not tile always open
